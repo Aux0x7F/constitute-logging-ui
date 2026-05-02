@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Constitute Logging</title>
+  <link rel="icon" href="data:," />
+  <script>
+    (() => {
+      const host = String(window.location.hostname || "").toLowerCase();
+      const path = String(window.location.pathname || "");
+      const isLocal = host === "localhost" || host === "127.0.0.1";
+      const atRepoRoot = /\/constitute-logging-ui\/?$/.test(path);
+      if (isLocal && atRepoRoot) {
+        const target = new URL("./dist/", window.location.href);
+        target.search = window.location.search;
+        target.hash = window.location.hash;
+        window.location.replace(target.toString());
+        return;
+      }
+      window.__CONSTITUTE_LOGGING_UI_DEV_ENTRY__ = "/src/main.js";
+    })();
+  </script>
+</head>
+<body class="booting">
+  <div id="bootSplash" aria-live="polite" role="status">
+    <div class="bootSplashCard">
+      <div class="bootSpinner" aria-hidden="true"></div>
+      <p id="bootSplashTitle" class="bootSplashTitle">Loading</p>
+      <p id="bootSplashStatus" class="bootSplashStatus" hidden></p>
+    </div>
+  </div>
+  <div id="app"></div>
+  <script>
+    (() => {
+      const entry = String(window.__CONSTITUTE_LOGGING_UI_DEV_ENTRY__ || "").trim();
+      if (!entry) return;
+      const script = document.createElement("script");
+      script.type = "module";
+      script.src = entry;
+      document.body.appendChild(script);
+    })();
+  </script>
+</body>
+</html>

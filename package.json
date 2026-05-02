@@ -1,0 +1,19 @@
+{
+  "name": "constitute-logging-ui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "node ./scripts/build.mjs",
+    "preview": "vite preview",
+    "test": "node --test tests/**/*.test.js"
+  },
+  "dependencies": {
+    "constitute-protocol": "github:Aux0x7F/constitute-protocol#logging-primitives",
+    "constitute-ui": "github:Aux0x7F/constitute-ui#main"
+  },
+  "devDependencies": {
+    "vite": "^6.2.0"
+  }
+}
