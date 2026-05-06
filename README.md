@@ -2,7 +2,7 @@
 
 `constitute-logging-ui` is the first-party operator console for `constitute-logging`.
 
-It provides live tail, filters, timelines, event detail shells, logging health/config, storage sync/pin status, and explicit client-side encrypted detail view.
+It provides a compact live tail table, contiguous repeat grouping, runtime-mediated older-page loading on scroll, command-style filter pills with autocomplete/range completion, tag and non-duplicative safe-fact pills, calm projection freshness, and explicit encrypted-detail affordances for future client-side decrypt/view. Logging health/config and storage archive detail stay out of primary UI unless exposed through a debug/config surface.
 
 ## Boundaries
 
