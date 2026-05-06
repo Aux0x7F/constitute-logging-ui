@@ -42,11 +42,7 @@
 }
 
 .loggingMain,
-.loggingStack,
-.loggingGrid,
-.loggingList,
-.loggingRows,
-.loggingControls {
+.loggingFilterBuilder {
   display: grid;
   gap: 1rem;
 }
@@ -55,13 +51,9 @@
   display: none;
 }
 
-.loggingGrid {
-  grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
-}
-
-.loggingControls {
-  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
-  align-items: end;
+.loggingFilterBuilder {
+  margin: 0.95rem 0 0.75rem;
+  gap: 0.55rem;
 }
 
 .loggingField {
@@ -80,37 +72,292 @@
   padding: 0.65rem 0.75rem;
 }
 
-.loggingEvent {
+.loggingFilterInputField {
+  max-width: min(46rem, 100%);
+}
+
+.loggingCommandWrap {
+  position: relative;
+}
+
+.loggingCommandInput {
+  padding-right: 2.25rem;
+}
+
+.loggingSuggestions {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 0.35rem);
+  left: 0;
+  width: min(32rem, 100%);
   display: grid;
-  gap: 0.65rem;
-  padding: 1rem;
-  border-radius: 18px;
-  border: 1px solid rgba(148, 163, 184, 0.2);
-  background: rgba(15, 23, 42, 0.66);
+  gap: 0.18rem;
+  padding: 0.35rem;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 16px;
+  background: rgba(15, 23, 42, 0.98);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.32);
 }
 
-.loggingEmpty {
-  padding: 1.1rem 1.15rem;
-  border: 1px dashed rgba(148, 163, 184, 0.28);
-  border-radius: 18px;
-  color: #9fb0c8;
-}
-
-.loggingEventHeader,
-.loggingRow {
+.loggingSuggestion {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
+  width: 100%;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: #f8fafc;
+  cursor: pointer;
+  padding: 0.48rem 0.6rem;
+  text-align: left;
 }
 
-.loggingEventTitle {
-  margin: 0;
-  font-size: 1rem;
+.loggingSuggestion:hover,
+.loggingSuggestion-active {
+  background: rgba(87, 209, 191, 0.14);
+}
+
+.loggingSuggestionLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 700;
+}
+
+.loggingSuggestionHint {
+  color: #9fb0c8;
+  font-size: 0.78rem;
+}
+
+.loggingFilterPills {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  min-height: 2rem;
+}
+
+.loggingFilterPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42rem;
+  max-width: 24rem;
+  border: 1px solid rgba(87, 209, 191, 0.25);
+  border-radius: 999px;
+  background: rgba(87, 209, 191, 0.13);
+  color: #a7fff1;
+  cursor: pointer;
+  padding: 0.28rem 0.6rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.loggingFilterPill span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.loggingFilterPillRemove {
+  color: #dbe6f8;
+  opacity: 0.72;
+}
+
+.loggingTitleLine {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.loggingFreshness {
+  width: 0.72rem;
+  height: 0.72rem;
+  border-radius: 999px;
+  display: inline-block;
+  box-shadow: 0 0 0 4px rgba(148, 163, 184, 0.08);
+  outline: none;
+}
+
+.loggingFreshness-fresh {
+  background: #57d1bf;
+  box-shadow: 0 0 0 4px rgba(87, 209, 191, 0.13);
+}
+
+.loggingFreshness-stale {
+  background: #f7b955;
+  box-shadow: 0 0 0 4px rgba(247, 185, 85, 0.13);
+}
+
+.loggingFreshness-missing {
+  background: #95a4ba;
+}
+
+.loggingFreshnessPopover {
+  position: absolute;
+  left: calc(100% + 0.55rem);
+  top: 50%;
+  transform: translateY(-50%);
+  min-width: 13rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: rgba(15, 23, 42, 0.98);
+  color: #b6c7df;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.32);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+  z-index: 5;
+}
+
+.loggingFreshness:hover + .loggingFreshnessPopover,
+.loggingFreshness:focus + .loggingFreshnessPopover,
+.loggingFreshnessPopover:hover {
+  opacity: 1;
 }
 
 .loggingMuted {
   color: #9fb0c8;
+}
+
+.loggingDashboardGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.loggingMetricCard,
+.loggingDashboardPanel,
+.loggingSettingsPanel {
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 18px;
+  background: rgba(15, 23, 42, 0.52);
+  padding: 0.9rem;
+}
+
+.loggingMetricLabel {
+  color: #9fb0c8;
+  font-size: 0.82rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.loggingMetricValue {
+  margin-top: 0.35rem;
+  color: #f8fafc;
+  font-size: clamp(1.8rem, 5vw, 3.1rem);
+  font-weight: 900;
+  line-height: 1;
+}
+
+.loggingMetricCard-critical {
+  background: linear-gradient(135deg, rgba(127, 29, 29, 0.42), rgba(15, 23, 42, 0.58));
+}
+
+.loggingMetricCard-error {
+  background: linear-gradient(135deg, rgba(153, 27, 27, 0.32), rgba(15, 23, 42, 0.58));
+}
+
+.loggingMetricCard-warning {
+  background: linear-gradient(135deg, rgba(113, 63, 18, 0.34), rgba(15, 23, 42, 0.58));
+}
+
+.loggingMetricCard-info {
+  background: linear-gradient(135deg, rgba(20, 83, 45, 0.28), rgba(15, 23, 42, 0.58));
+}
+
+.loggingDashboardSplit {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(17rem, 0.7fr) minmax(17rem, 0.7fr);
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.loggingSettingsGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(17rem, 0.7fr);
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.loggingDashboardPanel,
+.loggingSettingsPanel {
+  min-width: 0;
+}
+
+.loggingDashboardPanel h3,
+.loggingSettingsPanel h3 {
+  margin: 0 0 0.7rem;
+  color: #dbe6f8;
+  font-size: 0.95rem;
+}
+
+.loggingDashboardTable .cuTableWrap {
+  border-radius: 14px;
+}
+
+.loggingSummaryRows {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.loggingSummaryRow {
+  display: grid;
+  grid-template-columns: minmax(7rem, 1fr) minmax(0, 1.2fr);
+  gap: 0.75rem;
+  color: #9fb0c8;
+}
+
+.loggingSummaryRow span,
+.loggingSummaryRow strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.loggingSummaryRow strong {
+  color: #f8fafc;
+  font-weight: 800;
+}
+
+.loggingSettingsTableInner {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.loggingSettingsTableInner th,
+.loggingSettingsTableInner td {
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  padding: 0.55rem 0.35rem;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.loggingSettingsTableInner th {
+  color: #9fb0c8;
+  font-size: 0.78rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.loggingSettingsInput {
+  width: 100%;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.78);
+  color: #f8fafc;
+  padding: 0.45rem 0.55rem;
 }
 
 .loggingPill {
@@ -143,20 +390,258 @@
   color: #bbf7d0;
 }
 
-.loggingCode {
-  overflow: auto;
-  max-height: 18rem;
-  margin: 0;
-  padding: 0.8rem;
-  border-radius: 14px;
+.loggingTimeCell,
+.loggingLevelCell {
+  white-space: nowrap;
+}
+
+.loggingTimeCellWrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.loggingRepeatToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  border: 1px solid rgba(87, 209, 191, 0.25);
+  border-radius: 999px;
+  background: rgba(87, 209, 191, 0.08);
+  color: #a7fff1;
+  padding: 0.16rem 0.42rem;
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.loggingRepeatChevron {
+  width: 0;
+  height: 0;
+  border-left: 0.26rem solid transparent;
+  border-right: 0.26rem solid transparent;
+  border-top: 0.34rem solid currentColor;
+  transition: transform 120ms ease;
+}
+
+.loggingRepeatToggle[aria-expanded="true"] .loggingRepeatChevron {
+  transform: rotate(180deg);
+}
+
+.loggingRepeatCount {
+  line-height: 1;
+}
+
+.loggingGroupedRow td {
+  background: rgba(87, 209, 191, 0.025);
+}
+
+.loggingRepeatPanel {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.loggingRepeatSummary {
+  color: #9fb0c8;
+  font-size: 0.82rem;
+}
+
+.loggingRepeatTableHost .cuTableWrap {
+  border-radius: 12px;
+  background: rgba(5, 10, 20, 0.22);
+}
+
+.loggingRepeatTableHost .cuTable {
+  min-width: 680px;
+}
+
+.loggingSubjectCell {
+  min-width: 13rem;
+}
+
+.loggingTagsCell {
+  min-width: 11rem;
+}
+
+.loggingFactsCell {
+  min-width: 14rem;
+  color: #b6c7df;
+}
+
+.loggingDetailsCell {
+  min-width: 7rem;
+  white-space: nowrap;
+}
+
+.loggingPillWrap {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  max-width: 26rem;
+}
+
+.loggingCompactPill {
+  display: inline-flex;
+  align-items: center;
+  max-width: 14rem;
+  border-radius: 999px;
+  padding: 0.18rem 0.48rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.loggingTagPill {
+  border: 1px solid rgba(87, 209, 191, 0.25);
+  background: rgba(87, 209, 191, 0.08);
+  color: #a7fff1;
+}
+
+.loggingFactPill {
   border: 1px solid rgba(148, 163, 184, 0.18);
-  background: rgba(2, 6, 23, 0.62);
+  background: rgba(148, 163, 184, 0.08);
   color: #dbe6f8;
-  font-size: 0.86rem;
+}
+
+.loggingMorePill {
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  background: rgba(15, 23, 42, 0.82);
+  color: #9fb0c8;
+}
+
+.loggingDetailButton,
+.loggingModalClose,
+.loggingDecryptButton {
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.84);
+  color: #f8fafc;
+  cursor: pointer;
+}
+
+.loggingDetailButton {
+  padding: 0.35rem 0.7rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.loggingDetailButton:disabled,
+.loggingDecryptButton:disabled {
+  cursor: default;
+  opacity: 0.48;
+}
+
+.loggingModalBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+  background: rgba(2, 6, 12, 0.68);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+
+.loggingModal {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  z-index: 100;
+  width: min(42rem, calc(100vw - 2rem));
+  max-height: min(42rem, calc(100vh - 2rem));
+  overflow: auto;
+  transform: translate(-50%, -50%);
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 22px;
+  background: rgba(15, 23, 42, 0.98);
+  box-shadow: 0 34px 90px rgba(0, 0, 0, 0.42);
+  padding: 1rem;
+}
+
+.loggingModalHeader {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.loggingModalTitle {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.loggingModalSubtitle {
+  margin-top: 0.25rem;
+  color: #9fb0c8;
+  font-size: 0.9rem;
+}
+
+.loggingModalClose,
+.loggingDecryptButton {
+  padding: 0.45rem 0.8rem;
+}
+
+.loggingModalBody {
+  display: grid;
+  gap: 0.9rem;
+  padding-top: 0.9rem;
+}
+
+.loggingModalCopy {
+  margin: 0;
+  color: #c8d6ea;
+  line-height: 1.45;
+}
+
+.loggingDetailRefList {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.loggingDetailRef {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.75rem;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 16px;
+  background: rgba(5, 10, 20, 0.26);
+}
+
+.loggingDetailRefTitle {
+  font-weight: 800;
+}
+
+.loggingDetailRefRow {
+  display: grid;
+  grid-template-columns: 7rem minmax(0, 1fr);
+  gap: 0.6rem;
+  color: #9fb0c8;
+}
+
+.loggingDetailRefRow code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #f8fafc;
+}
+
+.loggingTableHost {
+  margin-top: 0.5rem;
 }
 
 @keyframes loggingSpin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 980px) {
+  .loggingDashboardGrid,
+  .loggingDashboardSplit,
+  .loggingSettingsGrid {
+    grid-template-columns: 1fr;
   }
 }
