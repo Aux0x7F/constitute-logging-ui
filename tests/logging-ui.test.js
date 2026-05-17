@@ -276,8 +276,11 @@ test("logging ui attaches to the account-owned runtime worker contract", () => {
 test("logging ui declares a surface app contract", async () => {
   const {
     loggingRuntimeClientModule,
+    loggingServiceManagerOperationPosture,
+    loggingServiceManagerProofDigest,
     loggingSurfaceApp,
     loggingSurfaceAttachContext,
+    loggingSurfaceBootstrapPosture,
     loggingSurfaceModuleRegistry,
     loggingSurfaceModules,
   } = await import("../src/surface-app-contract.js");
@@ -290,6 +293,11 @@ test("logging ui declares a surface app contract", async () => {
   assert.equal(typeof loggingRuntimeClientModule.createRuntimeSurfaceClient, "function");
   assert.equal(loggingSurfaceAttachContext.kind, "surface.app.attachContext");
   assert.equal(loggingSurfaceAttachContext.appId, "constitute-logging-ui");
+  assert.equal(loggingSurfaceBootstrapPosture.state, "ready");
+  assert.equal(loggingServiceManagerOperationPosture.kind, "service.manager.operation.posture");
+  assert.equal(loggingServiceManagerOperationPosture.state, "requested");
+  assert.equal(loggingServiceManagerProofDigest.kind, "service.manager.proof.digest");
+  assert.equal(loggingSurfaceAttachContext.serviceManagerProofDigest, loggingServiceManagerProofDigest);
 });
 
 test("logging ui renders resolved identity labels instead of raw ids", () => {
