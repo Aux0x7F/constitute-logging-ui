@@ -18,7 +18,7 @@ import { RUNTIME_DIAGNOSTIC_OPERATOR_PLANES, attachRuntimeDiagnostics } from "..
 import {
   browserStorageShellContext,
   deriveRuntimeShellState,
-} from "../../constitute-account/runtime-shell-state.js";
+} from "../../constitute-ui/src/runtime-shell-state.js";
 import {
   projectionCoverage as sharedProjectionCoverage,
   projectionDeltaFor as sharedProjectionDeltaFor,
