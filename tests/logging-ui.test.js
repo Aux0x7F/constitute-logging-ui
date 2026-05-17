@@ -253,6 +253,8 @@ test("logging ui updates shared connection surfaces from runtime state", () => {
 
 test("logging ui attaches to the account-owned runtime worker contract", () => {
   assert.match(source, /from "\.\.\/\.\.\/constitute-account\/runtime-contract\.js"/);
+  assert.match(source, /from "\.\/surface-app-contract\.js"/);
+  assert.match(source, /attachContext: loggingSurfaceAttachContext/);
   assert.match(source, /runtimeSharedWorkerName/);
   assert.match(source, /accountRuntimeWorkerScriptUrl\(window\.location\.origin\)/);
   assert.match(source, /runtimeAttachDebugInfo\(window\.location\.origin\)/);
@@ -261,6 +263,16 @@ test("logging ui attaches to the account-owned runtime worker contract", () => {
   assert.doesNotMatch(source, /pendingRuntimeResponses/);
   assert.doesNotMatch(source, /RUNTIME_WORKER_VERSION = Object\.freeze/);
   assert.doesNotMatch(source, /constitute-account-runtime-\$\{RUNTIME_WORKER_BUILD_ID\}/);
+});
+
+test("logging ui declares a surface app contract", async () => {
+  const { loggingSurfaceApp, loggingSurfaceAttachContext } = await import("../src/surface-app-contract.js");
+  assert.equal(loggingSurfaceApp.posture.state, "ready");
+  assert.equal(loggingSurfaceApp.hasRole("runtimeClient"), true);
+  assert.equal(loggingSurfaceApp.hasRole("projectionModel"), true);
+  assert.equal(loggingSurfaceApp.hasRole("productView"), true);
+  assert.equal(loggingSurfaceAttachContext.kind, "surface.app.attachContext");
+  assert.equal(loggingSurfaceAttachContext.appId, "constitute-logging-ui");
 });
 
 test("logging ui renders resolved identity labels instead of raw ids", () => {
