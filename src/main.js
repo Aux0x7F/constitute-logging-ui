@@ -1057,6 +1057,12 @@ function renderProjectionStatus() {
 
 function renderDashboard() {
   if (!dashboardCardsEl || !dashboardShortlistEl || !dashboardCoverageEl || !dashboardStorageEl) return;
+  const shellState = deriveRuntimeShellState(runtimeSnapshot, { context: browserStorageShellContext() });
+  const storagePostureRows = [
+    ["Resource", shellState.resource?.state || "unknown"],
+    ["Retention", shellState.retention?.state || "unknown"],
+    ["Release", shellState.retention?.releaseRequired ? "blocked" : "ready"],
+  ];
   const hasEventProjection = Boolean(eventsProjection);
   const hasDashboardProjection = Boolean(dashboardProjection);
   const hasAnyProjection = hasEventProjection || hasDashboardProjection || Boolean(healthProjection);
@@ -1077,6 +1083,7 @@ function renderDashboard() {
     dashboardStorageEl.replaceChildren(...summaryRows([
       ["Status", "Awaiting projection"],
       ["Archive", ""],
+      ...storagePostureRows,
     ]));
     return;
   }
@@ -1124,6 +1131,7 @@ function renderDashboard() {
   dashboardStorageEl.replaceChildren(...summaryRows([
     ["Status", storage.status || health.storageStatus || health.storage_status || "pending"],
     ["Archive", storage.archiveContainerId || health.archiveContainerId || health.archive_container_id || "not advertised"],
+    ...storagePostureRows,
   ]));
 }
 

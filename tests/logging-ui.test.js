@@ -284,3 +284,9 @@ test("logging ui renders resolved identity labels instead of raw ids", () => {
   assert.doesNotMatch(source, /identityLabel = linked \? resolvedIdentityLabel/);
   assert.doesNotMatch(source, /handle: linked \? labelForIdentity\(identityId\)/);
 });
+
+test("logging dashboard renders runtime resource and retention posture", () => {
+  assert.match(source, /shellState\.resource\?\.state \|\| "unknown"/);
+  assert.match(source, /shellState\.retention\?\.state \|\| "unknown"/);
+  assert.match(source, /shellState\.retention\?\.releaseRequired \? "blocked" : "ready"/);
+});
