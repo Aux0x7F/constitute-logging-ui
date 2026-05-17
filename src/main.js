@@ -322,6 +322,8 @@ let lastProjectionSelectionMaterializationBudget = null;
 let lastDashboardShortlistMaterializationBudget = null;
 let lastEventTableMaterializationBudget = null;
 let lastEventTableMaterializationDiagnosticKey = "";
+let runtimeSnapshotConsumerFloor = null;
+let lastRuntimeConsumerFloorDiagnosticKey = "";
 let shellChrome = null;
 const debugParams = new URLSearchParams(window.location.search || "");
 const debugEnabled = debugParams.get("debug") === "1" || debugParams.get("debug") === "true";
@@ -454,6 +456,25 @@ function attachRuntime() {
     onSnapshot: (snapshot) => {
       absorbRuntimeSnapshot(snapshot || null);
       dismissBootSplash();
+    },
+    onConsumerFloor: (floor) => {
+      runtimeSnapshotConsumerFloor = floor && typeof floor === "object" ? floor : null;
+      const diagnosticKey = JSON.stringify({
+        floorId: runtimeSnapshotConsumerFloor?.floorId || "",
+        lagState: runtimeSnapshotConsumerFloor?.lagState || "",
+        ackFloor: runtimeSnapshotConsumerFloor?.ackFloor || "",
+        witnessFloor: runtimeSnapshotConsumerFloor?.witnessFloor || "",
+      });
+      if (diagnosticKey !== lastRuntimeConsumerFloorDiagnosticKey) {
+        lastRuntimeConsumerFloorDiagnosticKey = diagnosticKey;
+        emitDiagnostic("logging-ui.runtime.consumer-floor", {
+          floorId: runtimeSnapshotConsumerFloor?.floorId || "",
+          lagState: runtimeSnapshotConsumerFloor?.lagState || "",
+          ackFloor: runtimeSnapshotConsumerFloor?.ackFloor || "",
+          witnessFloor: runtimeSnapshotConsumerFloor?.witnessFloor || "",
+          compactionFloor: runtimeSnapshotConsumerFloor?.compactionFloor || "",
+        });
+      }
     },
     onWorkerError: () => {
       renderProjectionStatus();
