@@ -202,7 +202,7 @@
   left: calc(100% + 0.55rem);
   top: 50%;
   transform: translateY(-50%);
-  min-width: 13rem;
+  min-width: 18rem;
   padding: 0.65rem 0.75rem;
   border-radius: 14px;
   border: 1px solid rgba(148, 163, 184, 0.22);
@@ -213,6 +213,11 @@
   pointer-events: none;
   transition: opacity 120ms ease;
   z-index: 5;
+}
+
+.loggingFreshnessPopover .cuStatusPanel,
+.loggingSummaryRows .cuStatusPanel {
+  margin-bottom: 0.55rem;
 }
 
 .loggingFreshness:hover + .loggingFreshnessPopover,

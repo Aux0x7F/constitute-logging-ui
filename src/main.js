@@ -4,24 +4,69 @@ import {
   bindFirstPartyShellChrome,
   renderDataTable,
   renderActionList,
-  renderAccountCenterSummary,
   renderFirstPartyShell,
+  renderProjectionSyncStatus,
   setConnectionStateText,
 } from "constitute-ui";
-import { LOGGING, PROJECTION, assertLogEventEnvelope } from "constitute-protocol";
+import { createRuntimeSurfaceClient } from "../../constitute-ui/src/runtime-surface-client.js";
+import { LOGGING, SWARM, assertConsumerFloor, assertLogEventEnvelope, assertMaterializationBudget } from "constitute-protocol";
+import {
+  runtimeAttachDebugInfo,
+  runtimeSharedWorkerName,
+  runtimeWorkerScriptUrl as accountRuntimeWorkerScriptUrl,
+} from "../../constitute-account/runtime-contract.js";
+import { RUNTIME_DIAGNOSTIC_OPERATOR_PLANES, attachRuntimeDiagnostics } from "../../constitute-account/runtime-diagnostics.js";
+import {
+  browserStorageShellContext,
+  deriveRuntimeShellState,
+} from "../../constitute-account/runtime-shell-state.js";
 
-const RUNTIME_WORKER_VERSION = Object.freeze({ major: 2, minor: 12 });
-const RUNTIME_WORKER_BUILD_ID = `runtime-${RUNTIME_WORKER_VERSION.major}.${RUNTIME_WORKER_VERSION.minor}`;
 const RUNTIME_ATTACH_TIMEOUT_MS = 5_000;
 const RUNTIME_CALL_TIMEOUT_MS = 15_000;
-const PROJECTION_POLICY_PUT = "projection.policy.put";
 const DEFAULT_SYNC_TARGET_COUNT = 2_500;
 const DEFAULT_POLICY_ID = "logging.default.72h.low";
-const LEGACY_DEFAULT_POLICY_ID = "logging.default.24h.low";
+const PROJECTION_POLICY_PUT = "projection.policy.put";
 const DEBUG_RING_LIMIT = 240;
-const EVENTS_CHANNEL = PROJECTION.CHANNEL.LOGGING_EVENTS;
-const HEALTH_CHANNEL = PROJECTION.CHANNEL.LOGGING_HEALTH;
-const DASHBOARD_CHANNEL = PROJECTION.CHANNEL.LOGGING_DASHBOARD || "logging.dashboard";
+const LOGGING_SERVICE = "logging";
+const EVENTS_NODE = "events";
+const HEALTH_NODE = "health";
+const DASHBOARD_NODE = "dashboard";
+const RUNTIME_PROJECTION_CHANNELS = Object.freeze({
+  [EVENTS_NODE]: "logging.events",
+  [HEALTH_NODE]: "logging.health",
+  [DASHBOARD_NODE]: "logging.dashboard",
+});
+const LOGGING_SURFACE_NODES = Object.freeze([
+  { path: EVENTS_NODE, nodeId: "logging.events", label: "Events", backingChannel: "logging.events" },
+  { path: HEALTH_NODE, nodeId: "logging.health", label: "Health", backingChannel: "logging.health" },
+  { path: DASHBOARD_NODE, nodeId: "logging.dashboard", label: "Dashboard", backingChannel: "logging.dashboard" },
+]);
+const PROJECTION_SIGNATURE_MATERIALIZATION_BUDGET = Object.freeze(assertMaterializationBudget({
+  kind: SWARM.RECORD_KIND.MATERIALIZATION_BUDGET,
+  budgetId: "logging-ui.projection-signature",
+  sourceAuthority: "runtime.projection.snapshot",
+  consumerRef: "logging-ui.projection-signature",
+  payloadClass: SWARM.MATERIALIZATION_PAYLOAD_CLASS.PROJECTION,
+  copyRole: SWARM.MATERIALIZATION_COPY_ROLE.PROJECTION,
+  transferMode: SWARM.MATERIALIZATION_TRANSFER_MODE.CLONE,
+  privacyTier: SWARM.MATERIALIZATION_PRIVACY_TIER.SAFE_PROJECTION,
+  state: SWARM.RESOURCE_POSTURE_STATE.WITHIN_BUDGET,
+  limits: { maxProjectionCount: 3, maxSignatureBytes: 64_000 },
+  snapshotPolicy: { mode: "semantic-signature" },
+  deltaPolicy: { mode: "signature-only" },
+  coalescing: { key: "projectionRuntimeKey" },
+  cardinality: { projectionKeys: 3 },
+  schema: {
+    state: SWARM.MATERIALIZATION_SCHEMA_STATE.CURRENT,
+    version: "logging-ui.projection-signature.v1",
+  },
+  issuedAt: 1,
+}));
+const LOGGING_UI_PROJECTION_SELECTION_MATERIALIZATION_BUDGET_ID = "logging-ui.projection-selection";
+const LOGGING_UI_DASHBOARD_SHORTLIST_MATERIALIZATION_BUDGET_ID = "logging-ui.dashboard-shortlist";
+const LOGGING_UI_DASHBOARD_SHORTLIST_LIMIT = 8;
+const LOGGING_UI_EVENT_TABLE_MATERIALIZATION_BUDGET_ID = "logging-ui.event-table";
+const LOGGING_UI_EVENT_TABLE_EVENT_LIMIT = 2_500;
 const SYNC_STATES = Object.freeze({
   IDLE: "idle",
   SYNCING: "syncing",
@@ -29,7 +74,6 @@ const SYNC_STATES = Object.freeze({
   STALE: "stale",
   BLOCKED: "blocked",
   COMPLETE_ENOUGH: "completeEnough",
-  ...(PROJECTION.SYNC_STATE || {}),
 });
 const LOGGING_VERBOSITIES = Object.freeze(Object.values(LOGGING.VERBOSITY_CLASS || {
   CRITICAL: "critical",
@@ -45,11 +89,11 @@ const SEVERITY_RANK = new Map(LOGGING_SEVERITIES.map((severity, index) => [sever
 const RANGE_SEPARATOR = " - ";
 const DEFAULT_PROJECTION_POLICY = Object.freeze({
   policyId: DEFAULT_POLICY_ID,
-  service: "logging",
-  channelId: EVENTS_CHANNEL,
+  service: LOGGING_SERVICE,
+  nodePath: EVENTS_NODE,
   scope: { range: "rolling", hours: 72, verbosity: "low" },
   rollingWindowHours: 72,
-  maxVerbosityClass: "normal",
+  maxVerbosityClass: "verbose",
   minSeverity: "debug",
   excludedVerbosityClasses: ["noise"],
   syncDepthTarget: { mode: "policyComplete", targetCount: DEFAULT_SYNC_TARGET_COUNT },
@@ -202,7 +246,7 @@ const shell = renderFirstPartyShell(app, {
     { id: "settings", label: "Settings" },
   ],
   mainHtml: MAIN_HTML,
-  accountCenterTitle: "Account",
+  accountCenterTitle: "",
 });
 
 const bootSplashEl = document.getElementById("bootSplash");
@@ -238,10 +282,10 @@ const popGatewayEl = shell.popGatewayEl;
 const popServicesEl = shell.popServicesEl;
 const popConnectionReasonEl = shell.popConnectionReasonEl;
 
-let runtimePort = null;
+let runtimeDiagnosticsAgent = null;
 let runtimeSnapshot = null;
 let runtimeReady = false;
-let runtimeRequestSeq = 1;
+let runtimeClient = null;
 let bootSplashDismissed = false;
 let accountBridgeFrame = null;
 let accountBridgePromise = null;
@@ -255,10 +299,15 @@ let filterSuggestions = [];
 let activeSuggestionIndex = 0;
 let projectionPolicy = loadProjectionPolicy();
 let lastPublishedPolicyKey = "";
+let lastRuntimeSnapshotDiagnosticKey = "";
 const lastProjectionSignatures = new Map();
+const projectionRepairRequests = new Map();
 const notifications = [];
-const pendingRuntimeResponses = new Map();
 const expandedEventGroups = new Set();
+let lastProjectionSelectionMaterializationBudget = null;
+let lastDashboardShortlistMaterializationBudget = null;
+let lastEventTableMaterializationBudget = null;
+let lastEventTableMaterializationDiagnosticKey = "";
 let shellChrome = null;
 const debugParams = new URLSearchParams(window.location.search || "");
 const debugEnabled = debugParams.get("debug") === "1" || debugParams.get("debug") === "true";
@@ -293,9 +342,7 @@ async function boot() {
 }
 
 function runtimeWorkerUrl() {
-  const target = new URL("/constitute-account/runtime.worker.js", window.location.origin);
-  target.searchParams.set("v", RUNTIME_WORKER_BUILD_ID);
-  return target.toString();
+  return accountRuntimeWorkerScriptUrl(window.location.origin);
 }
 
 function accountBridgeUrl() {
@@ -337,90 +384,83 @@ function attachRuntime() {
     renderProjectionStatus();
     return null;
   }
-  try {
-    const worker = new SharedWorker(runtimeWorkerUrl(), {
-      type: "module",
-      name: `constitute-account-runtime-${RUNTIME_WORKER_BUILD_ID}`,
-    });
-    const port = worker.port;
-    port.start();
-    port.onmessage = (event) => {
-      const msg = event?.data || {};
+  runtimeClient = createRuntimeSurfaceClient({
+    clientId: "logging-ui",
+    surface: "logging-ui",
+    workerUrl: runtimeWorkerUrl(),
+    workerName: runtimeSharedWorkerName(),
+    attachTimeoutMs: RUNTIME_ATTACH_TIMEOUT_MS,
+    callTimeoutMs: RUNTIME_CALL_TIMEOUT_MS,
+    debug: debugEnabled,
+    debugInfo: runtimeAttachDebugInfo(window.location.origin),
+    logPrefix: "logging-ui",
+    onPort: (port) => {
+      runtimeDiagnosticsAgent = attachRuntimeDiagnostics({
+        port,
+        surface: "constitute-logging-ui",
+        clientId: "logging-ui",
+        enabled: debugEnabled,
+        planes: RUNTIME_DIAGNOSTIC_OPERATOR_PLANES,
+        minLevelByPlane: { diagnostic: "warn" },
+        denyKinds: ["projection.applied", "projection.ignored"],
+      });
+    },
+    onMessage: (msg) => {
+      if (runtimeDiagnosticsAgent?.handleMessage(msg)) return true;
       if (msg.type === "runtime.attached" || msg.type === "runtime.snapshot") {
-        absorbRuntimeSnapshot(msg.snapshot || null);
-        dismissBootSplash();
-        return;
+        return false;
       }
       if (msg.type === "projection.observer.update") {
         const projection = msg.projection && typeof msg.projection === "object" ? msg.projection : null;
         emitDiagnostic("projection.observer.notified", {
           projectionKey: msg.update?.projectionKey || "",
-          channelId: projection?.channelId || "",
+          projectionChannel: projection?.channelId || "",
+          nodePath: projectionNodePath(projection),
           changedCount: msg.update?.changedCount || 0,
           coverage: msg.update?.coverage || null,
         });
-        if (projection?.channelId) {
-          applyProjectionSnapshot({ [projection.channelId]: projection });
+        const key = projectionRuntimeKey(projection, msg.update?.projectionKey);
+        if (key) {
+          applyProjectionSnapshot({ [key]: projection });
         }
-        return;
+        return true;
+      }
+      if (msg.type === "projection.repair.request") {
+        rememberProjectionRepairRequest(msg.repairRequest, msg.frame);
+        renderProjectionStatus();
+        renderDashboard();
+        return true;
       }
       if (msg.type === "projection.sync.diagnostic") {
-        emitDiagnostic(String(msg.operation || "projection.sync.diagnostic"), msg.detail || {});
-        return;
+        return true;
       }
-      if (msg.type === "runtime.response") {
-        settleRuntimeResponse(msg);
-      }
-    };
-    worker.onerror = () => {
+      return false;
+    },
+    onSnapshot: (snapshot) => {
+      absorbRuntimeSnapshot(snapshot || null);
+      dismissBootSplash();
+    },
+    onWorkerError: () => {
       renderProjectionStatus();
       void ensureAccountBridge("runtime worker recovery");
-    };
-    port.postMessage({
-      type: "runtime.attach",
-      clientId: "logging-ui",
-      surface: "logging-ui",
-      broker: false,
-    });
-    runtimePort = port;
-    return port;
-  } catch (error) {
-    console.warn("[logging-ui] runtime attach failed", error);
-    renderProjectionStatus();
-    return null;
-  }
-}
-
-function settleRuntimeResponse(msg) {
-  const requestId = String(msg.requestId || "").trim();
-  const pending = pendingRuntimeResponses.get(requestId);
-  if (!pending) return;
-  window.clearTimeout(pending.timer);
-  pendingRuntimeResponses.delete(requestId);
-  if (msg.ok === false) pending.reject(new Error(String(msg.error || `${pending.type} failed`)));
-  else pending.resolve(msg.result);
+    },
+    onAttachError: (error) => {
+      console.warn("[logging-ui] runtime attach failed", error);
+      renderProjectionStatus();
+    },
+  });
+  return runtimeClient.attach();
 }
 
 function runtimeCall(type, payload = {}, timeoutMs = RUNTIME_CALL_TIMEOUT_MS) {
-  if (!runtimePort) return Promise.reject(new Error("shared runtime is unavailable"));
-  const requestId = `logging-ui-${type}-${runtimeRequestSeq++}`;
-  return new Promise((resolve, reject) => {
-    const timer = window.setTimeout(() => {
-      pendingRuntimeResponses.delete(requestId);
-      reject(new Error(`${type} timed out`));
-    }, timeoutMs);
-    pendingRuntimeResponses.set(requestId, { resolve, reject, timer, type });
-    runtimePort.postMessage({ type, requestId, clientId: "logging-ui", ...payload });
-  });
+  return runtimeClient?.call(type, payload, timeoutMs)
+    || Promise.reject(new Error("shared runtime is unavailable"));
 }
 
 function absorbRuntimeSnapshot(snapshot) {
   runtimeSnapshot = snapshot && typeof snapshot === "object" ? snapshot : null;
   runtimeReady = Boolean(runtimeSnapshot);
-  emitDiagnostic("logging-ui.runtime.snapshot.received", {
-    projectionCount: Object.keys(runtimeSnapshot?.projections || {}).length,
-    brokerAvailable: runtimeBrokerAvailable(),
-  });
+  emitRuntimeSnapshotDiagnostic(runtimeSnapshot);
   renderRuntimeState();
   applyProjectionSnapshot(runtimeSnapshot?.projections || {});
   publishProjectionPolicy();
@@ -432,24 +472,39 @@ function absorbRuntimeSnapshot(snapshot) {
   }
 }
 
+function emitRuntimeSnapshotDiagnostic(snapshot) {
+  const projectionKeys = Object.keys(snapshot?.projections || {}).sort();
+  const diagnosticKey = JSON.stringify({
+    projectionKeys,
+    brokerAvailable: runtimeBrokerAvailable(),
+    runtimeSessionId: snapshot?.runtimeSessionId || "",
+  });
+  if (diagnosticKey === lastRuntimeSnapshotDiagnosticKey) return;
+  lastRuntimeSnapshotDiagnosticKey = diagnosticKey;
+  emitDiagnostic("logging-ui.runtime.snapshot.received", {
+    projectionCount: projectionKeys.length,
+    brokerAvailable: runtimeBrokerAvailable(),
+  });
+}
+
 function runtimeBrokerAvailable() {
   return runtimeSnapshot?.broker?.available === true;
 }
 
 function applyProjectionSnapshot(projections) {
   let projectionChanged = false;
-  const nextHealth = projectionForChannel(projections, HEALTH_CHANNEL);
-  if (nextHealth && markProjectionChanged(HEALTH_CHANNEL, nextHealth)) {
+  const nextHealth = projectionForNode(projections, HEALTH_NODE);
+  if (nextHealth && markProjectionChanged(HEALTH_NODE, nextHealth)) {
     healthProjection = nextHealth;
     projectionChanged = true;
   }
-  const nextDashboard = projectionForChannel(projections, DASHBOARD_CHANNEL);
-  if (nextDashboard && markProjectionChanged(DASHBOARD_CHANNEL, nextDashboard)) {
+  const nextDashboard = projectionForNode(projections, DASHBOARD_NODE);
+  if (nextDashboard && markProjectionChanged(DASHBOARD_NODE, nextDashboard)) {
     dashboardProjection = nextDashboard;
     projectionChanged = true;
   }
-  const nextEvents = projectionForChannel(projections, EVENTS_CHANNEL);
-  if (nextEvents && markProjectionChanged(EVENTS_CHANNEL, nextEvents)) {
+  const nextEvents = projectionForNode(projections, EVENTS_NODE);
+  if (nextEvents && markProjectionChanged(EVENTS_NODE, nextEvents)) {
     eventsProjection = nextEvents;
     const payloadEvents = Array.isArray(nextEvents?.payload?.events) ? nextEvents.payload.events : [];
     const projectionEvents = payloadEvents.filter(isValidEvent);
@@ -476,27 +531,84 @@ function applyProjectionSnapshot(projections) {
   });
 }
 
-function markProjectionChanged(channelId, projection) {
+function markProjectionChanged(nodePath, projection) {
   const signature = projectionContentSignature(projection);
   if (!signature) return false;
-  if (lastProjectionSignatures.get(channelId) === signature) return false;
-  lastProjectionSignatures.set(channelId, signature);
+  if (lastProjectionSignatures.get(nodePath) === signature) return false;
+  lastProjectionSignatures.set(nodePath, signature);
   return true;
 }
 
-function projectionForChannel(projections, channelId) {
+function loggingSurface() {
+  return {
+    surfaceId: "logging.surface",
+    service: LOGGING_SERVICE,
+    nodes: LOGGING_SURFACE_NODES,
+  };
+}
+
+function loggingNode(nodePath) {
+  const target = String(nodePath || "").trim().toLowerCase();
+  const surface = loggingSurface();
+  const nodes = Array.isArray(surface?.nodes) ? surface.nodes : [];
+  return nodes.find((node) => {
+    const aliases = Array.isArray(node?.aliases) ? node.aliases : [];
+    return [node?.path, node?.nodePath, node?.nodeId, node?.label, ...aliases]
+      .map((value) => String(value || "").trim().toLowerCase())
+      .filter(Boolean)
+      .includes(target);
+  }) || null;
+}
+
+function projectionForNode(projections, nodePath) {
   if (!projections || typeof projections !== "object") return null;
-  const direct = projections[channelId];
-  if (direct && String(direct?.channelId || "").trim() === channelId) return direct;
-  const candidates = Object.values(projections).filter((projection) => (
-    projection
-    && typeof projection === "object"
-    && String(projection?.channelId || "").trim() === channelId
-  ));
-  const policyId = projectionPolicyForChannel(channelId).policyId;
-  const exact = candidates.find((projection) => projectionRecordPolicyId(projection) === policyId);
-  if (exact) return exact;
-  return candidates.sort((left, right) => projectionUpdatedAt(right) - projectionUpdatedAt(left))[0] || null;
+  const target = String(nodePath || "").trim().toLowerCase();
+  const node = loggingNode(nodePath);
+  const backingChannel = String(node?.backingChannel || "").trim();
+  const channelAdapter = RUNTIME_PROJECTION_CHANNELS[target] || "";
+  const policyId = projectionPolicyForNode(nodePath).policyId;
+  let examined = 0;
+  let matched = 0;
+  let exact = null;
+  let latest = null;
+  for (const key of Object.keys(projections)) {
+    const projection = projections[key];
+    examined += 1;
+    if (!projection || typeof projection !== "object") continue;
+    const matches = projectionNodePath(projection) === target
+      || (backingChannel && String(projection?.channelId || "").trim() === backingChannel)
+      || (!backingChannel && channelAdapter && String(projection?.channelId || "").trim() === channelAdapter);
+    if (!matches) continue;
+    matched += 1;
+    if (projectionRecordPolicyId(projection) === policyId) {
+      exact = projection;
+      break;
+    }
+    if (!latest || projectionUpdatedAt(projection) > projectionUpdatedAt(latest)) latest = projection;
+  }
+  lastProjectionSelectionMaterializationBudget = projectionSelectionMaterializationBudget(nodePath, examined, matched);
+  return exact || latest || null;
+}
+
+function projectionRuntimeKey(projection, fallback = "") {
+  return String(
+    projection?.nodePath
+      || projection?.payload?.nodePath
+      || projection?.channelId
+      || projection?.projectionId
+      || fallback
+      || "",
+  ).trim();
+}
+
+function projectionNodePath(projection) {
+  const direct = String(projection?.nodePath || projection?.payload?.nodePath || "").trim().toLowerCase();
+  if (direct) return direct;
+  const channelId = String(projection?.channelId || "").trim();
+  for (const [nodePath, channelAdapter] of Object.entries(RUNTIME_PROJECTION_CHANNELS)) {
+    if (channelId === channelAdapter) return nodePath;
+  }
+  return "";
 }
 
 function projectionContentSignature(projection) {
@@ -507,16 +619,27 @@ function projectionContentSignature(projection) {
   }
 }
 
-function projectionSemanticShape(projection) {
-  const clone = projection && typeof projection === "object" ? JSON.parse(JSON.stringify(projection)) : {};
-  delete clone.retainedAt;
-  delete clone.requestId;
-  if (clone.cursor && typeof clone.cursor === "object") delete clone.cursor.updatedAt;
-  if (clone.freshness && typeof clone.freshness === "object") {
-    delete clone.freshness.updatedAt;
-    delete clone.freshness.staleAfter;
+function cloneProjectionForSignature(projection, materializationBudget = PROJECTION_SIGNATURE_MATERIALIZATION_BUDGET) {
+  if (!projection || typeof projection !== "object") return {};
+  if (materializationBudget?.transferMode === SWARM.MATERIALIZATION_TRANSFER_MODE.REFERENCE_ONLY) return projection;
+  return projectionSignatureValue(projection);
+}
+
+function projectionSignatureValue(value, path = "") {
+  if (Array.isArray(value)) return value.map((item) => projectionSignatureValue(item, path));
+  if (!value || typeof value !== "object") return value;
+  const out = {};
+  for (const [key, child] of Object.entries(value)) {
+    if (key === "retainedAt" || key === "requestId") continue;
+    if (path === "cursor" && key === "updatedAt") continue;
+    if (path === "freshness" && (key === "updatedAt" || key === "staleAfter")) continue;
+    out[key] = projectionSignatureValue(child, key);
   }
-  return clone;
+  return out;
+}
+
+function projectionSemanticShape(projection) {
+  return cloneProjectionForSignature(projection);
 }
 
 function projectionReplacesEventSet(projection) {
@@ -537,8 +660,8 @@ function projectionCoverage(projection = eventsProjection) {
     };
   }
   const coverage = projection?.payload?.coverage || projection?.coverage || {};
-  const channelId = String(projection?.channelId || "").trim();
-  const isEventProjection = channelId === EVENTS_CHANNEL;
+  const nodePath = String(projection?.nodePath || projection?.payload?.nodePath || "").trim().toLowerCase();
+  const isEventProjection = nodePath === EVENTS_NODE || Array.isArray(projection?.payload?.events);
   const fallbackMaterialized = isEventProjection ? events.length : (projection ? 1 : 0);
   const fallbackTarget = fallbackMaterialized;
   const materializedCount = Number(coverage.materializedCount ?? fallbackMaterialized);
@@ -558,6 +681,98 @@ function projectionCoverage(projection = eventsProjection) {
   };
 }
 
+function prepareProjectionSyncStatus(projection, nodePath = EVENTS_NODE) {
+  const coverage = projectionCoverage(projection);
+  const delta = projectionDeltaFor(projection);
+  const repair = projectionRepairFor(projection, nodePath);
+  const updatedAt = Number(projection?.freshness?.updatedAt || projection?.retainedAt || projection?.cursor?.updatedAt || 0);
+  const freshnessState = String(projection?.freshness?.state || "").trim().toLowerCase();
+  const syncState = String(coverage.syncState || "").trim().toLowerCase();
+  const pendingDeltas = Number(
+    projection?.pendingDeltas
+      || projection?.deltaStatus?.pendingDeltas
+      || projection?.payload?.deltaStatus?.pendingDeltas
+      || 0,
+  );
+  const repairPending = Boolean(repair);
+  return {
+    projectionId: String(projection?.projectionId || delta?.projectionId || projection?.channelId || `${LOGGING_SERVICE}.${nodePath}`).trim(),
+    revision: String(projection?.revision || delta?.revision || projection?.payload?.revision || ""),
+    stale: freshnessState === "stale" || syncState === "stale",
+    gap: repairPending || syncState === SYNC_STATES.BLOCKED.toLowerCase() || syncState === "gap",
+    pending: syncState === SYNC_STATES.SYNCING.toLowerCase() || pendingDeltas > 0,
+    pendingDeltas,
+    repair: repairPending,
+    repairPending,
+    repairRequested: repairPending,
+    lastAppliedAt: updatedAt ? formatEventTime(updatedAt) : "",
+  };
+}
+
+function projectionDeltaFor(projection) {
+  const delta = projection?.projectionDelta || projection?.delta || projection?.payload?.projectionDelta || projection?.payload?.delta;
+  return delta && typeof delta === "object" ? delta : null;
+}
+
+function rememberProjectionRepairRequest(repairRequest, frame = null) {
+  if (!repairRequest || typeof repairRequest !== "object") return;
+  const projectionId = String(repairRequest.projectionId || repairRequest.projection_id || frame?.channelId || "").trim();
+  if (!projectionId) return;
+  projectionRepairRequests.set(projectionId, {
+    repairRequest,
+    frame,
+    requestedAt: Date.now(),
+  });
+  emitDiagnostic("projection.repair.request", {
+    projectionId,
+    currentRevision: repairRequest.currentRevision || repairRequest.current_revision || "",
+    targetRevision: repairRequest.targetRevision || repairRequest.target_revision || "",
+  });
+}
+
+function projectionRepairFor(projection, nodePath = EVENTS_NODE) {
+  const direct = projection?.repairRequest || projection?.repair || projection?.payload?.repairRequest || projection?.payload?.repair;
+  if (direct && typeof direct === "object") return direct;
+  const target = String(nodePath || "").trim().toLowerCase();
+  const ids = [
+    projection?.projectionId,
+    projection?.channelId,
+    projectionDeltaFor(projection)?.projectionId,
+    RUNTIME_PROJECTION_CHANNELS[target],
+    `${LOGGING_SERVICE}.${target}`,
+  ].map((value) => String(value || "").trim()).filter(Boolean);
+  const edgeRequests = Array.isArray(runtimeSnapshot?.edge?.repairRequests) ? runtimeSnapshot.edge.repairRequests : [];
+  for (const id of ids) {
+    if (projectionRepairRequests.has(id)) return projectionRepairRequests.get(id).repairRequest;
+    const edgeMatch = edgeRequests.find((entry) => {
+      const request = entry?.repairRequest || entry;
+      const projectionId = String(request?.projectionId || request?.projection_id || "").trim();
+      return projectionId === id;
+    });
+    if (edgeMatch) return edgeMatch.repairRequest || edgeMatch;
+  }
+  return null;
+}
+
+function projectionDeltaStatusLabel(projection) {
+  const delta = projectionDeltaFor(projection);
+  if (!delta) return "";
+  const revision = delta.revision ?? "";
+  const baseRevision = delta.baseRevision ?? delta.base_revision ?? "";
+  if (revision !== "" && baseRevision !== "") return `${baseRevision} -> ${revision}`;
+  if (revision !== "") return `r${revision}`;
+  return "ready";
+}
+
+function projectionRepairStatusLabel(projection, nodePath = EVENTS_NODE) {
+  const repair = projectionRepairFor(projection, nodePath);
+  if (!repair) return "";
+  const current = repair.currentRevision ?? repair.current_revision ?? "";
+  const target = repair.targetRevision ?? repair.target_revision ?? "";
+  if (current !== "" || target !== "") return `${current || "?"} -> ${target || "?"}`;
+  return "requested";
+}
+
 function projectionUpdatedAt(projection) {
   return timestampMillis(projection?.freshness?.updatedAt || projection?.retainedAt || projection?.cursor?.updatedAt || 0);
 }
@@ -572,32 +787,40 @@ function projectionRecordPolicyId(projection) {
 }
 
 function publishProjectionPolicy({ force = false } = {}) {
-  if (!runtimeReady || !runtimePort) return;
+  if (!runtimeReady) return;
   const policyKey = JSON.stringify(projectionPolicy);
   if (!force && lastPublishedPolicyKey === policyKey) return;
   lastPublishedPolicyKey = policyKey;
-  emitDiagnostic("projection.policy.applied", {
-    policyId: projectionPolicy.policyId,
-    service: projectionPolicy.service,
-    channelId: projectionPolicy.channelId,
-  });
-  runtimeCall(PROJECTION_POLICY_PUT, { policy: projectionPolicy })
-    .catch((error) => {
-      lastPublishedPolicyKey = "";
-      emitDiagnostic("projection.sync.degraded", {
-        error: String(error?.message || error || "projection policy was not accepted"),
+  for (const node of LOGGING_SURFACE_NODES) {
+    const policy = projectionPolicyForNode(node.path);
+    emitDiagnostic("projection.policy.applied", {
+      policyId: policy.policyId,
+      service: policy.service,
+      nodePath: policy.nodePath,
+      backingChannel: node.backingChannel,
+    });
+    runtimeCall(PROJECTION_POLICY_PUT, { policy }).catch((error) => {
+      emitDiagnostic("projection.policy.rejected", {
+        policyId: policy.policyId,
+        service: policy.service,
+        nodePath: policy.nodePath,
+        error: String(error?.message || error || "projection policy rejected"),
       });
     });
+  }
 }
 
-function projectionPolicyForChannel(channelId) {
+function projectionPolicyForNode(nodePath) {
+  const target = String(nodePath || EVENTS_NODE).trim();
+  const node = LOGGING_SURFACE_NODES.find((candidate) => candidate.path === target);
+  const backingChannel = String(node?.backingChannel || RUNTIME_PROJECTION_CHANNELS[target] || "").trim();
   return {
     ...projectionPolicy,
-    channelId,
-    policyId: channelId === EVENTS_CHANNEL
+    nodePath: target,
+    policyId: target === EVENTS_NODE
       ? projectionPolicy.policyId
-      : `${projectionPolicy.policyId}.${channelId.replace(/[^a-z0-9]+/gi, ".")}`,
-    service: "logging",
+      : `${projectionPolicy.policyId}.${target.replace(/[^a-z0-9]+/gi, ".")}`,
+    service: LOGGING_SERVICE,
   };
 }
 
@@ -631,54 +854,32 @@ function saveProjectionPolicy(nextPolicy) {
 }
 
 function normalizeProjectionPolicy(policy) {
-  const migratedPolicy = migrateLegacyDefaultPolicy(policy);
+  const sourcePolicy = policy && typeof policy === "object" ? policy : {};
   const targetCount = syncTargetCount({
-    syncDepthTarget: migratedPolicy?.syncDepthTarget || DEFAULT_PROJECTION_POLICY.syncDepthTarget,
+    syncDepthTarget: sourcePolicy?.syncDepthTarget || DEFAULT_PROJECTION_POLICY.syncDepthTarget,
   });
   return {
     ...DEFAULT_PROJECTION_POLICY,
-    ...(migratedPolicy && typeof migratedPolicy === "object" ? migratedPolicy : {}),
-    channelId: EVENTS_CHANNEL,
-    service: "logging",
-    policyId: String(migratedPolicy?.policyId || DEFAULT_PROJECTION_POLICY.policyId).trim() || DEFAULT_PROJECTION_POLICY.policyId,
+    ...sourcePolicy,
+    service: LOGGING_SERVICE,
+    nodePath: EVENTS_NODE,
+    policyId: String(sourcePolicy?.policyId || DEFAULT_PROJECTION_POLICY.policyId).trim() || DEFAULT_PROJECTION_POLICY.policyId,
     scope: {
       ...DEFAULT_PROJECTION_POLICY.scope,
-      ...(migratedPolicy?.scope && typeof migratedPolicy.scope === "object" ? migratedPolicy.scope : {}),
+      ...(sourcePolicy?.scope && typeof sourcePolicy.scope === "object" ? sourcePolicy.scope : {}),
     },
-    rollingWindowHours: Number(migratedPolicy?.rollingWindowHours || DEFAULT_PROJECTION_POLICY.rollingWindowHours),
-    excludedVerbosityClasses: Array.isArray(migratedPolicy?.excludedVerbosityClasses)
-      ? migratedPolicy.excludedVerbosityClasses.filter(Boolean)
+    rollingWindowHours: Number(sourcePolicy?.rollingWindowHours || DEFAULT_PROJECTION_POLICY.rollingWindowHours),
+    excludedVerbosityClasses: Array.isArray(sourcePolicy?.excludedVerbosityClasses)
+      ? sourcePolicy.excludedVerbosityClasses.filter(Boolean)
       : [...DEFAULT_PROJECTION_POLICY.excludedVerbosityClasses],
     syncDepthTarget: {
       ...DEFAULT_PROJECTION_POLICY.syncDepthTarget,
-      ...(migratedPolicy?.syncDepthTarget && typeof migratedPolicy.syncDepthTarget === "object" ? migratedPolicy.syncDepthTarget : {}),
+      ...(sourcePolicy?.syncDepthTarget && typeof sourcePolicy.syncDepthTarget === "object" ? sourcePolicy.syncDepthTarget : {}),
       targetCount,
     },
     retentionTarget: {
       ...DEFAULT_PROJECTION_POLICY.retentionTarget,
-      ...(migratedPolicy?.retentionTarget && typeof migratedPolicy.retentionTarget === "object" ? migratedPolicy.retentionTarget : {}),
-    },
-  };
-}
-
-function migrateLegacyDefaultPolicy(policy) {
-  if (!policy || typeof policy !== "object") return policy;
-  const rawPolicyId = String(policy.policyId || "").trim();
-  if (rawPolicyId && rawPolicyId !== LEGACY_DEFAULT_POLICY_ID) return policy;
-  const rawHours = Number(policy.rollingWindowHours || policy.scope?.hours || 24);
-  const rawScopeRange = String(policy.scope?.range || "rolling").trim();
-  const rawVerbosity = String(policy.scope?.verbosity || "low").trim();
-  const defaultLike = rawHours === 24 && rawScopeRange === "rolling" && rawVerbosity === "low";
-  if (!defaultLike) return policy;
-  return {
-    ...policy,
-    policyId: DEFAULT_POLICY_ID,
-    rollingWindowHours: 72,
-    scope: {
-      ...(policy.scope && typeof policy.scope === "object" ? policy.scope : {}),
-      range: "rolling",
-      hours: 72,
-      verbosity: "low",
+      ...(sourcePolicy?.retentionTarget && typeof sourcePolicy.retentionTarget === "object" ? sourcePolicy.retentionTarget : {}),
     },
   };
 }
@@ -790,39 +991,30 @@ function mergeEventRecord(existing, next) {
 }
 
 function renderRuntimeState() {
-  const shellState = runtimeSnapshot?.shell || {};
-  const identity = shellState?.identity || {};
-  const connection = shellState?.connection || {};
-  const relay = shellState?.relay || {};
-  const ownedGateway = shellState?.ownedGateway || {};
-  const services = shellState?.services || {};
-  const linked = Boolean(identity?.linked);
-  const identityId = String(identity?.identityId || identity?.id || "").trim();
-  const connectionLabel = String(connection?.label || connection?.overall || "Pending").trim() || "Pending";
-  const connectionCode = String(connection?.code || connection?.overall || "connecting").trim().toLowerCase();
-  const identityLabel = linked ? resolvedIdentityLabel(identity, identityId) : "@unlinked";
+  const shellState = deriveRuntimeShellState(runtimeSnapshot, { context: browserStorageShellContext() });
 
-  identityHandleEl.textContent = identityLabel;
-  identityHandleEl.classList.toggle("identityHandle-linked", linked);
-  identityHandleEl.classList.toggle("identityHandle-unlinked", !linked);
-  identityHandleEl.title = linked ? "Open account center" : "Identity not linked yet";
+  identityHandleEl.textContent = shellState.identity.handle;
+  identityHandleEl.classList.toggle("identityHandle-linked", shellState.identity.linked);
+  identityHandleEl.classList.toggle("identityHandle-unlinked", !shellState.identity.linked);
+  identityHandleEl.title = shellState.identity.title;
+  identityHandleEl.setAttribute("aria-label", shellState.identity.ariaLabel);
 
   renderAccountCenter({
-    identityId,
-    identityLabel,
-    linked,
-    connectionLabel,
-    connectionCode,
+    identityId: shellState.identity.identityId,
+    identityLabel: shellState.identity.handle,
+    linked: shellState.identity.linked,
+    connectionLabel: shellState.connection.label,
+    connectionCode: shellState.connection.code,
   });
   setConnectionStateText(connStateTextEl, {
-    label: connectionLabel,
-    toneClass: connectionToneClass(connectionCode),
+    label: shellState.connection.label,
+    toneClass: shellState.connection.toneClass,
   });
-  popConnectionEl.textContent = connectionLabel;
-  popRelayEl.textContent = String(relay?.state || (runtimeReady ? "pending" : "attaching"));
-  popGatewayEl.textContent = String(ownedGateway?.state || "pending");
-  popServicesEl.textContent = String(services?.state || "pending");
-  popConnectionReasonEl.textContent = String(connection?.reason || "Waiting for account runtime projection.");
+  popConnectionEl.textContent = shellState.connection.label;
+  popRelayEl.textContent = shellState.relay.state || (runtimeReady ? "pending" : "attaching");
+  popGatewayEl.textContent = shellState.gateway.state;
+  popServicesEl.textContent = shellState.services.state;
+  popConnectionReasonEl.textContent = shellState.connection.reason || "Waiting for account runtime projection.";
 }
 
 function renderAccountCenter({
@@ -832,12 +1024,7 @@ function renderAccountCenter({
   connectionLabel = "Pending",
   connectionCode = "connecting",
 } = {}) {
-  renderAccountCenterSummary(accountCenterSummaryEl, {
-    handle: linked ? identityLabel : "@unlinked",
-    linked,
-    connectionLabel,
-    connectionToneClass: connectionToneClass(connectionCode),
-  });
+  accountCenterSummaryEl.replaceChildren();
   renderActionList(accountCenterActionsEl, [
     {
       id: "account.open_center",
@@ -846,20 +1033,6 @@ function renderAccountCenter({
       onSelect: () => {
         shellChrome?.closeAccountCenter();
         window.location.assign(new URL("/constitute-account/#activity=home", window.location.origin).toString());
-      },
-    },
-    {
-      id: "account.copy_identity",
-      label: "Copy Identity ID",
-      disabled: !identityId,
-      onSelect: () => {
-        shellChrome?.closeAccountCenter();
-        if (!identityId) return;
-        void navigator.clipboard.writeText(identityId).then(() => {
-          addNotification("good", "Identity copied", "Copied linked identity ID.");
-        }).catch((error) => {
-          addNotification("bad", "Identity copy failed", String(error?.message || error));
-        });
       },
     },
   ]);
@@ -895,16 +1068,20 @@ function renderProjectionStatus() {
     );
   }
   if (freshnessPopoverEl) {
-    freshnessPopoverEl.innerHTML = hasProjection
-      ? `
-        <div><strong>${escapeHtml(status)}</strong></div>
-        <div>${escapeHtml(coverageCountLabel(count, target))} (${escapeHtml(percent)}%)</div>
-        <div>Updated ${escapeHtml(updated)}</div>
-      `
-      : `
-        <div><strong>Awaiting projection</strong></div>
-        <div>Runtime sync will update this view when data is available.</div>
-      `;
+    if (hasProjection) {
+      renderProjectionSyncStatus(freshnessPopoverEl, prepareProjectionSyncStatus(eventsProjection, EVENTS_NODE));
+      freshnessPopoverEl.append(...summaryRows([
+        ["Events", `${coverageCountLabel(count, target)} (${percent}%)`],
+        ["Updated", updated],
+        ["Delta", projectionDeltaStatusLabel(eventsProjection)],
+        ["Repair", projectionRepairStatusLabel(eventsProjection, EVENTS_NODE)],
+      ]));
+    } else {
+      freshnessPopoverEl.replaceChildren(...summaryRows([
+        ["State", "Awaiting projection"],
+        ["Events", ""],
+      ]));
+    }
   }
   if (!eventsProjection && !events.length) {
     renderEvents();
@@ -946,14 +1123,16 @@ function renderDashboard() {
     metricCard("Info", counts.info || counts.notice || 0, "info"),
   );
 
-  const shortlist = Array.isArray(payload.criticalShortlist) ? payload.criticalShortlist.filter(isValidEvent) : criticalShortlistFromEvents(events);
+  const shortlist = Array.isArray(payload.criticalShortlist)
+    ? validCriticalShortlist(payload.criticalShortlist)
+    : criticalShortlistFromEvents(events);
   dashboardShortlistEl.replaceChildren();
   if (!shortlist.length) {
     dashboardShortlistEl.appendChild(summaryEmpty("No critical, error, or warning events."));
   } else {
     renderDataTable(dashboardShortlistEl, {
       columns: loggingTableColumns(),
-      rows: groupContiguousEvents(shortlist.slice(0, 8)),
+      rows: groupContiguousEvents(shortlist),
       emptyLabel: "No critical, error, or warning events.",
       className: "loggingTable loggingDashboardTable",
       getRowClassName: (row) => row.repeatCount > 1 ? "loggingGroupedRow" : "",
@@ -961,13 +1140,16 @@ function renderDashboard() {
     });
   }
 
-  dashboardCoverageEl.replaceChildren(...summaryRows([
+  renderProjectionSyncStatus(dashboardCoverageEl, prepareProjectionSyncStatus(eventsProjection, EVENTS_NODE));
+  dashboardCoverageEl.append(...summaryRows([
     ["State", titleCaseWords(projectionCoverage(eventsProjection).syncState)],
     ["Materialized", coverageCountLabel(
       projectionCoverage(eventsProjection).materializedCount,
       projectionCoverage(eventsProjection).targetCount,
     )],
     ["Coverage", `${Math.round(projectionCoverage(eventsProjection).completionRatio * 100)}%`],
+    ["Delta", projectionDeltaStatusLabel(eventsProjection)],
+    ["Repair", projectionRepairStatusLabel(eventsProjection, EVENTS_NODE)],
     ["Window", `${projectionPolicy.rollingWindowHours}h rolling`],
   ]));
 
@@ -1091,15 +1273,54 @@ function severityCountsFromEvents(sourceEvents) {
 }
 
 function criticalShortlistFromEvents(sourceEvents) {
-  return sourceEvents
-    .filter((event) => ["critical", "error", "warning", "warn"].includes(String(event?.severity || "").toLowerCase()))
-    .slice(0, 8);
+  const shortlist = [];
+  for (const event of sourceEvents) {
+    const severity = String(event?.severity || "").toLowerCase();
+    if (severity !== "critical" && severity !== "error" && severity !== "warning" && severity !== "warn") continue;
+    shortlist.push(event);
+    if (shortlist.length >= LOGGING_UI_DASHBOARD_SHORTLIST_LIMIT) break;
+  }
+  lastDashboardShortlistMaterializationBudget = dashboardShortlistMaterializationBudget(sourceEvents, shortlist);
+  return shortlist;
+}
+
+function validCriticalShortlist(sourceEvents) {
+  const shortlist = [];
+  for (const event of sourceEvents) {
+    if (!isValidEvent(event)) continue;
+    shortlist.push(event);
+    if (shortlist.length >= LOGGING_UI_DASHBOARD_SHORTLIST_LIMIT) break;
+  }
+  lastDashboardShortlistMaterializationBudget = dashboardShortlistMaterializationBudget(sourceEvents, shortlist);
+  return shortlist;
 }
 
 function renderFilterBuilder() {
+  const draft = preserveFilterDraft();
   renderActiveFilters();
+  restoreFilterDraft(draft);
   renderFilterSuggestions();
   renderEvents();
+}
+
+function preserveFilterDraft() {
+  if (!filterInputEl) return null;
+  return {
+    value: filterInputEl.value,
+    selectionStart: filterInputEl.selectionStart,
+    selectionEnd: filterInputEl.selectionEnd,
+    active: document.activeElement === filterInputEl,
+  };
+}
+
+function restoreFilterDraft(draft) {
+  if (!draft || !filterInputEl) return;
+  if (filterInputEl.value !== draft.value) filterInputEl.value = draft.value;
+  if (!draft.active) return;
+  filterInputEl.focus();
+  if (draft.selectionStart !== null && draft.selectionEnd !== null) {
+    filterInputEl.setSelectionRange(draft.selectionStart, draft.selectionEnd);
+  }
 }
 
 function renderActiveFilters() {
@@ -1527,8 +1748,189 @@ function loggingTableColumns({ subtable = false } = {}) {
   ];
 }
 
+function projectionSelectionMaterializationBudget(nodePath, examinedCount, matchedCount, sampledAt = Date.now()) {
+  const maxProjectionCandidates = Object.keys(RUNTIME_PROJECTION_CHANNELS).length * 4;
+  const overBudget = examinedCount > maxProjectionCandidates;
+  return assertMaterializationBudget({
+    kind: SWARM.RECORD_KIND.MATERIALIZATION_BUDGET,
+    budgetId: `${LOGGING_UI_PROJECTION_SELECTION_MATERIALIZATION_BUDGET_ID}:${String(nodePath || "unknown").trim() || "unknown"}`,
+    sourceAuthority: "runtime.projection.snapshot",
+    consumerRef: "logging-ui.projection-selector",
+    payloadClass: SWARM.MATERIALIZATION_PAYLOAD_CLASS.PROJECTION,
+    copyRole: SWARM.MATERIALIZATION_COPY_ROLE.REFERENCE_ONLY,
+    transferMode: SWARM.MATERIALIZATION_TRANSFER_MODE.REFERENCE_ONLY,
+    privacyTier: SWARM.MATERIALIZATION_PRIVACY_TIER.UI_PROJECTION,
+    state: overBudget ? SWARM.RESOURCE_POSTURE_STATE.PRESSURE : SWARM.RESOURCE_POSTURE_STATE.WITHIN_BUDGET,
+    limits: {
+      maxProjectionCandidates,
+      examinedCount,
+      matchedCount,
+      nodePath,
+    },
+    snapshotPolicy: { mode: "single-pass-node-selection" },
+    deltaPolicy: { mode: "replace-selected-reference" },
+    coalescing: { key: "projectionRuntimeKey" },
+    cardinality: { maxNodePaths: Object.keys(RUNTIME_PROJECTION_CHANNELS).length },
+    schema: {
+      state: SWARM.MATERIALIZATION_SCHEMA_STATE.CURRENT,
+      version: "logging-ui.projection-selection.v1",
+    },
+    blockedReasons: overBudget ? ["loggingUiProjectionSelectionPressure"] : [],
+    referenceRefs: ["runtime.projection.snapshot"],
+    retentionClass: "ephemeral.ui-index",
+    issuedAt: sampledAt,
+    releaseAfter: sampledAt,
+    expiresAt: sampledAt + 60_000,
+  });
+}
+
+function dashboardShortlistMaterializationBudget(sourceEvents, materializedEvents, sampledAt = Date.now()) {
+  const overBudget = materializedEvents.length > LOGGING_UI_DASHBOARD_SHORTLIST_LIMIT;
+  return assertMaterializationBudget({
+    kind: SWARM.RECORD_KIND.MATERIALIZATION_BUDGET,
+    budgetId: LOGGING_UI_DASHBOARD_SHORTLIST_MATERIALIZATION_BUDGET_ID,
+    sourceAuthority: "runtime.logging.dashboard.projection",
+    consumerRef: "logging-ui.dashboard-shortlist",
+    payloadClass: SWARM.MATERIALIZATION_PAYLOAD_CLASS.PROJECTION,
+    copyRole: SWARM.MATERIALIZATION_COPY_ROLE.PROJECTION,
+    transferMode: SWARM.MATERIALIZATION_TRANSFER_MODE.REFERENCE_ONLY,
+    privacyTier: SWARM.MATERIALIZATION_PRIVACY_TIER.UI_PROJECTION,
+    state: overBudget ? SWARM.RESOURCE_POSTURE_STATE.PRESSURE : SWARM.RESOURCE_POSTURE_STATE.WITHIN_BUDGET,
+    limits: {
+      maxRenderedEvents: LOGGING_UI_DASHBOARD_SHORTLIST_LIMIT,
+      sourceCount: sourceEvents.length,
+      materializedCount: materializedEvents.length,
+    },
+    snapshotPolicy: { mode: "runtime-dashboard-or-local-reference" },
+    deltaPolicy: { mode: "bounded-severity-shortlist" },
+    coalescing: { key: "eventMaterializationKey" },
+    cardinality: { maxSeverityBands: 4 },
+    schema: {
+      state: SWARM.MATERIALIZATION_SCHEMA_STATE.CURRENT,
+      version: "logging-ui.dashboard-shortlist.v1",
+    },
+    blockedReasons: overBudget ? ["loggingUiDashboardShortlistPressure"] : [],
+    referenceRefs: ["logging-ui.dashboard"],
+    retentionClass: "ephemeral.ui-projection",
+    issuedAt: sampledAt,
+    releaseAfter: sampledAt,
+    expiresAt: sampledAt + 60_000,
+  });
+}
+
+function eventTableConsumerFloor(sourceEvents, materializedEvents, sampledAt = Date.now()) {
+  const first = materializedEvents[0] || null;
+  const last = materializedEvents[materializedEvents.length - 1] || null;
+  const lastObserved = last ? eventTimeSeconds(last) * 1000 : 0;
+  const newestObserved = first ? eventTimeSeconds(first) * 1000 : 0;
+  const overBudget = sourceEvents.length > LOGGING_UI_EVENT_TABLE_EVENT_LIMIT;
+  return assertConsumerFloor({
+    kind: SWARM.RECORD_KIND.CONSUMER_FLOOR,
+    floorId: `floor:${LOGGING_UI_EVENT_TABLE_MATERIALIZATION_BUDGET_ID}`,
+    consumerRef: "logging-ui.events-view",
+    materializationId: LOGGING_UI_EVENT_TABLE_MATERIALIZATION_BUDGET_ID,
+    subjectRef: "logging.events.ui-table",
+    cursor: last ? eventMaterializationKey(last) : undefined,
+    ackFloor: String(materializedEvents.length),
+    witnessFloor: String(materializedEvents.length),
+    compactionFloor: String(Math.min(sourceEvents.length, LOGGING_UI_EVENT_TABLE_EVENT_LIMIT)),
+    eventTimeFloor: lastObserved || undefined,
+    observedTimeFloor: newestObserved || sampledAt,
+    lagState: overBudget ? SWARM.MATERIALIZATION_LAG_STATE.LAGGING : SWARM.MATERIALIZATION_LAG_STATE.CAUGHT_UP,
+    reason: overBudget ? "logging UI event table source count exceeds local materialization budget" : undefined,
+    replay: { mode: "ui-filter", sourceCount: sourceEvents.length },
+    redelivery: { mode: "rerender", duplicatePolicy: "eventMaterializationKey" },
+    sampledAt,
+    expiresAt: sampledAt + 60_000,
+  });
+}
+
+function eventTableMaterializationBudget(sourceEvents, materializedEvents, sampledAt = Date.now()) {
+  const overBudget = sourceEvents.length > LOGGING_UI_EVENT_TABLE_EVENT_LIMIT
+    || materializedEvents.length > LOGGING_UI_EVENT_TABLE_EVENT_LIMIT;
+  return assertMaterializationBudget({
+    kind: SWARM.RECORD_KIND.MATERIALIZATION_BUDGET,
+    budgetId: LOGGING_UI_EVENT_TABLE_MATERIALIZATION_BUDGET_ID,
+    sourceAuthority: "runtime.logging.events.projection",
+    consumerRef: "logging-ui.events-view",
+    payloadClass: SWARM.MATERIALIZATION_PAYLOAD_CLASS.PROJECTION,
+    copyRole: SWARM.MATERIALIZATION_COPY_ROLE.PROJECTION,
+    transferMode: SWARM.MATERIALIZATION_TRANSFER_MODE.REFERENCE_ONLY,
+    privacyTier: SWARM.MATERIALIZATION_PRIVACY_TIER.UI_PROJECTION,
+    state: overBudget ? SWARM.RESOURCE_POSTURE_STATE.PRESSURE : SWARM.RESOURCE_POSTURE_STATE.WITHIN_BUDGET,
+    limits: {
+      maxSourceEvents: LOGGING_UI_EVENT_TABLE_EVENT_LIMIT,
+      maxRenderedEvents: LOGGING_UI_EVENT_TABLE_EVENT_LIMIT,
+      activeFilterCount: activeFilters.length,
+      sourceCount: sourceEvents.length,
+      materializedCount: materializedEvents.length,
+    },
+    snapshotPolicy: { mode: "runtime-projection-owned" },
+    deltaPolicy: { mode: "ui-filter-reference-view" },
+    coalescing: { key: "eventMaterializationKey" },
+    cardinality: {
+      maxFilterCount: FILTER_DEFINITIONS.length,
+      maxVisibleTagValues: 24,
+      highCardinalityOverflow: "encryptedDetailRef",
+    },
+    schema: {
+      state: SWARM.MATERIALIZATION_SCHEMA_STATE.CURRENT,
+      version: "logging-ui.event-table.v1",
+    },
+    consumerFloor: eventTableConsumerFloor(sourceEvents, materializedEvents, sampledAt),
+    blockedReasons: overBudget ? ["loggingUiEventTablePressure"] : [],
+    referenceRefs: ["logging-ui.events"],
+    retentionClass: "ephemeral.ui-projection",
+    issuedAt: sampledAt,
+    releaseAfter: sampledAt,
+    expiresAt: sampledAt + 60_000,
+  });
+}
+
+function materializeFilteredEvents() {
+  const materialized = [];
+  for (const event of events) {
+    let accepted = true;
+    for (const filter of activeFilters) {
+      if (!eventMatchesFilter(event, filter)) {
+        accepted = false;
+        break;
+      }
+    }
+    if (accepted) materialized.push(event);
+  }
+  lastEventTableMaterializationBudget = eventTableMaterializationBudget(events, materialized);
+  const diagnosticKey = JSON.stringify({
+    budgetId: lastEventTableMaterializationBudget.budgetId,
+    sourceCount: events.length,
+    materializedCount: materialized.length,
+    activeFilterCount: activeFilters.length,
+    state: lastEventTableMaterializationBudget.state,
+  });
+  if (diagnosticKey !== lastEventTableMaterializationDiagnosticKey) {
+    lastEventTableMaterializationDiagnosticKey = diagnosticKey;
+    emitDiagnostic("logging-ui.event-table.materialized", {
+      sourceCount: events.length,
+      materializedCount: materialized.length,
+      activeFilterCount: activeFilters.length,
+      materializationBudget: {
+        budgetId: lastEventTableMaterializationBudget.budgetId,
+        payloadClass: lastEventTableMaterializationBudget.payloadClass,
+        copyRole: lastEventTableMaterializationBudget.copyRole,
+        transferMode: lastEventTableMaterializationBudget.transferMode,
+        state: lastEventTableMaterializationBudget.state,
+      },
+      consumerFloor: {
+        floorId: lastEventTableMaterializationBudget.consumerFloor?.floorId || "",
+        lagState: lastEventTableMaterializationBudget.consumerFloor?.lagState || "",
+      },
+    });
+  }
+  return materialized;
+}
+
 function filteredEvents() {
-  return events.filter((event) => activeFilters.every((filter) => eventMatchesFilter(event, filter)));
+  return materializeFilteredEvents();
 }
 
 function eventMatchesFilter(event, filter) {
@@ -2179,39 +2581,6 @@ function filterTimeLabel(value) {
     minute: "2-digit",
   }).replace(/\s/g, "");
   return `${datePart}, ${timePart}`;
-}
-
-function resolvedIdentityLabel(identity, identityId) {
-  const rawId = String(identityId || identity?.identityId || identity?.id || "").trim();
-  const directLabel = normalizeIdentityDisplay(
-    identity?.label || identity?.displayName || identity?.display_name || identity?.identityLabel,
-    rawId,
-  );
-  if (directLabel) return directLabel;
-
-  const names = runtimeSnapshot?.resourceNames && typeof runtimeSnapshot.resourceNames === "object"
-    ? runtimeSnapshot.resourceNames
-    : {};
-  const resourceLabel = normalizeIdentityDisplay(names[rawId], rawId);
-  if (resourceLabel) return resourceLabel;
-
-  return rawId ? "@linked" : "@unlinked";
-}
-
-function normalizeIdentityDisplay(value, rawId = "") {
-  const raw = String(value || "").trim().replace(/^@+/, "");
-  if (!raw) return "";
-  if (rawId && raw === rawId) return "";
-  if (/^id[-_]/i.test(raw) && raw.length > 18) return "";
-  return `@${raw}`;
-}
-
-function connectionToneClass(label) {
-  const value = String(label || "").toLowerCase();
-  if (value.includes("connected")) return "connStateText-connected";
-  if (value.includes("degraded") || value.includes("limited") || value.includes("refresh") || value.includes("connect")) return "connStateText-limited";
-  if (value.includes("error") || value.includes("offline")) return "connStateText-error";
-  return "connStateText-limited";
 }
 
 function formatEventTime(value) {
