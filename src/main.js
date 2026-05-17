@@ -20,6 +20,7 @@ import {
   browserStorageShellContext,
   deriveRuntimeShellState,
 } from "../../constitute-account/runtime-shell-state.js";
+import { loggingSurfaceAttachContext } from "./surface-app-contract.js";
 
 const RUNTIME_ATTACH_TIMEOUT_MS = 5_000;
 const RUNTIME_CALL_TIMEOUT_MS = 15_000;
@@ -394,6 +395,7 @@ function attachRuntime() {
     debug: debugEnabled,
     debugInfo: runtimeAttachDebugInfo(window.location.origin),
     logPrefix: "logging-ui",
+    attachContext: loggingSurfaceAttachContext,
     onPort: (port) => {
       runtimeDiagnosticsAgent = attachRuntimeDiagnostics({
         port,
