@@ -119,6 +119,8 @@ test("logging ui observes synchronized runtime projections instead of assembling
   assert.match(source, /DEFAULT_SYNC_TARGET_COUNT = 2_500/);
   assert.match(source, /nodePath: EVENTS_NODE/);
   assert.match(source, /RUNTIME_PROJECTION_CHANNELS/);
+  assert.match(source, /from "\.\.\/\.\.\/constitute-ui\/src\/projection-read-model\.js"/);
+  assert.match(source, /selectProjectionForNode/);
   assert.match(source, /function projectionCoverage\(/);
   assert.match(source, /PROJECTION_SIGNATURE_MATERIALIZATION_BUDGET/);
   assert.match(source, /function cloneProjectionForSignature\(/);
@@ -131,10 +133,10 @@ test("logging ui observes synchronized runtime projections instead of assembling
   assert.match(source, /assertMaterializationBudget/);
   assert.doesNotMatch(source, /structuredClone\(projection\)/);
   assert.doesNotMatch(source, /JSON\.parse\(JSON\.stringify\(projection\)\)/);
-  assert.match(source, /if \(!projection\) \{\s+return \{\s+materializedCount: 0,\s+targetCount: 0,\s+completionRatio: 0,/s);
+  assert.match(source, /sharedProjectionCoverage\(projection/);
   assert.match(source, /function publishProjectionPolicy\(/);
   assert.match(source, /runtimeCall\(PROJECTION_POLICY_PUT, \{ policy \}\)/);
-  assert.match(source, /backingChannel: node\.backingChannel/);
+  assert.match(source, /backingChannel: String\(node\?\.backingChannel/);
   assert.doesNotMatch(source, /\.\.\.\(backingChannel \? \{ channelId: backingChannel \} : \{\}\)/);
   assert.match(source, /function projectionForNode\(/);
   assert.match(source, /function projectionNodePath\(/);
