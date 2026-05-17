@@ -33,6 +33,7 @@ import {
   materializationBudgetRecord,
   materializationBudgetLimit,
   materializationConsumerFloorRecord,
+  materializationEventReplayPosture,
   requireSurfaceMaterializationBudget,
 } from "../../constitute-ui/src/surface-app-contract.js";
 import {
@@ -1068,6 +1069,12 @@ function renderDashboard() {
     ["Retention", shellState.retention?.state || "unknown"],
     ["Release", shellState.retention?.releaseRequired ? "blocked" : "ready"],
   ];
+  const replayPosture = lastEventTableMaterializationBudget?.replayPosture || null;
+  const replayPostureRows = [
+    ["Replay", replayPosture ? titleCaseWords(replayPosture.state || "unknown") : "pending"],
+    ["Privacy", Array.isArray(replayPosture?.privacy?.tiers) ? replayPosture.privacy.tiers.join(" + ") : ""],
+    ["Schema", replayPosture?.schema?.state || "pending"],
+  ];
   const hasEventProjection = Boolean(eventsProjection);
   const hasDashboardProjection = Boolean(dashboardProjection);
   const hasAnyProjection = hasEventProjection || hasDashboardProjection || Boolean(healthProjection);
@@ -1088,6 +1095,7 @@ function renderDashboard() {
     dashboardStorageEl.replaceChildren(...summaryRows([
       ["Status", "Awaiting projection"],
       ["Archive", ""],
+      ...replayPostureRows,
       ...storagePostureRows,
     ]));
     return;
@@ -1136,6 +1144,7 @@ function renderDashboard() {
   dashboardStorageEl.replaceChildren(...summaryRows([
     ["Status", storage.status || health.storageStatus || health.storage_status || "pending"],
     ["Archive", storage.archiveContainerId || health.archiveContainerId || health.archive_container_id || "not advertised"],
+    ...replayPostureRows,
     ...storagePostureRows,
   ]));
 }
@@ -1786,31 +1795,54 @@ function dashboardShortlistMaterializationBudget(sourceEvents, materializedEvent
   }));
 }
 
-function eventTableConsumerFloor(sourceEvents, materializedEvents, sampledAt = Date.now()) {
-  const first = materializedEvents[0] || null;
-  const last = materializedEvents[materializedEvents.length - 1] || null;
-  const lastObserved = last ? eventTimeSeconds(last) * 1000 : 0;
-  const newestObserved = first ? eventTimeSeconds(first) * 1000 : 0;
-  return assertConsumerFloor(materializationConsumerFloorRecord(LOGGING_UI_EVENT_TABLE_CONTRACT_BUDGET, {
+function eventTableReplayPosture(sourceEvents, materializedEvents, sampledAt = Date.now()) {
+  return materializationEventReplayPosture(LOGGING_UI_EVENT_TABLE_CONTRACT_BUDGET, {
+    sourceEvents,
+    materializedEvents,
+    eventKey: eventMaterializationKey,
+    eventTime: eventEventTimeMillis,
+    observedTime: eventObservedTimeMillis,
+    schemaVersion: eventSchemaVersion,
+    safeFacts: (event) => event?.safeFacts || event?.safe_facts || {},
+    tags: (event) => Array.isArray(event?.tags) ? event.tags : [],
+    encryptedDetailRefs,
+    expectedSchemaVersion: LOGGING.SCHEMA_VERSION,
+    sampledAt,
+    consumerFloor: {
+      floorId: `floor:${LOGGING_UI_EVENT_TABLE_MATERIALIZATION_BUDGET_ID}`,
+      consumerRef: "logging-ui.events-view",
+      materializationId: LOGGING_UI_EVENT_TABLE_MATERIALIZATION_BUDGET_ID,
+      subjectRef: "logging.events.ui-table",
+    },
+  });
+}
+
+function eventTableConsumerFloor(sourceEvents, materializedEvents, sampledAt = Date.now(), replayPosture = null) {
+  const posture = replayPosture || eventTableReplayPosture(sourceEvents, materializedEvents, sampledAt);
+  return assertConsumerFloor({
+    ...materializationConsumerFloorRecord(LOGGING_UI_EVENT_TABLE_CONTRACT_BUDGET, {
     floorId: `floor:${LOGGING_UI_EVENT_TABLE_MATERIALIZATION_BUDGET_ID}`,
     consumerRef: "logging-ui.events-view",
     materializationId: LOGGING_UI_EVENT_TABLE_MATERIALIZATION_BUDGET_ID,
     subjectRef: "logging.events.ui-table",
     sourceCount: sourceEvents.length,
     materializedCount: materializedEvents.length,
-    cursor: last ? eventMaterializationKey(last) : undefined,
-    eventTimeFloor: lastObserved || undefined,
-    observedTimeFloor: newestObserved || sampledAt,
+      cursor: posture.consumerFloor?.cursor,
+      eventTimeFloor: posture.bitemporal?.eventTimeFloor,
+      observedTimeFloor: posture.bitemporal?.observedTimeFloor || sampledAt,
     reason: sourceEvents.length > LOGGING_UI_EVENT_TABLE_EVENT_LIMIT
       ? "logging UI event table source count exceeds local materialization budget"
-      : "",
-    replay: { mode: "ui-filter", sourceCount: sourceEvents.length },
-    redelivery: { mode: "rerender", duplicatePolicy: "eventMaterializationKey" },
-    sampledAt,
-  }));
+        : (posture.blockedReasons?.[0] || ""),
+      replay: posture.consumerFloor?.replay || { mode: "ui-filter", sourceCount: sourceEvents.length },
+      redelivery: posture.consumerFloor?.redelivery || { mode: "rerender", duplicatePolicy: "eventMaterializationKey" },
+      sampledAt,
+    }),
+    lagState: posture.consumerFloor?.lagState || "unknown",
+  });
 }
 
 function eventTableMaterializationBudget(sourceEvents, materializedEvents, sampledAt = Date.now()) {
+  const replayPosture = eventTableReplayPosture(sourceEvents, materializedEvents, sampledAt);
   return assertMaterializationBudget(materializationBudgetRecord(LOGGING_UI_EVENT_TABLE_CONTRACT_BUDGET, {
     sourceCount: sourceEvents.length,
     materializedCount: materializedEvents.length,
@@ -1830,17 +1862,36 @@ function eventTableMaterializationBudget(sourceEvents, materializedEvents, sampl
     cardinality: {
       maxFilterCount: FILTER_DEFINITIONS.length,
       maxVisibleTagValues: 24,
+      safeFactKeyCount: replayPosture.cardinality?.safeFactKeyCount || 0,
+      labelValueCount: replayPosture.cardinality?.labelValueCount || 0,
       highCardinalityOverflow: "encryptedDetailRef",
     },
     schema: {
-      state: SWARM.MATERIALIZATION_SCHEMA_STATE.CURRENT,
+      state: replayPosture.schema?.state === "quarantined"
+        ? SWARM.MATERIALIZATION_SCHEMA_STATE.QUARANTINED
+        : SWARM.MATERIALIZATION_SCHEMA_STATE.CURRENT,
       version: "logging-ui.event-table.v1",
+      eventSchemaVersions: replayPosture.schema?.versions || {},
     },
-    consumerFloor: eventTableConsumerFloor(sourceEvents, materializedEvents, sampledAt),
+    consumerFloor: eventTableConsumerFloor(sourceEvents, materializedEvents, sampledAt, replayPosture),
+    replayPosture,
     referenceRefs: ["logging-ui.events"],
     retentionClass: "ephemeral.ui-projection",
     sampledAt,
   }));
+}
+
+function eventEventTimeMillis(event) {
+  return timestampMillis(eventTimeSeconds(event));
+}
+
+function eventObservedTimeMillis(event) {
+  const observed = Number(event?.observedAt || event?.observed_at || 0);
+  return observed ? timestampMillis(observed) : eventEventTimeMillis(event);
+}
+
+function eventSchemaVersion(event) {
+  return event?.schemaVersion || event?.schema_version || LOGGING.SCHEMA_VERSION;
 }
 
 function materializeFilteredEvents() {
@@ -1862,6 +1913,8 @@ function materializeFilteredEvents() {
     materializedCount: materialized.length,
     activeFilterCount: activeFilters.length,
     state: lastEventTableMaterializationBudget.state,
+    replayState: lastEventTableMaterializationBudget.replayPosture?.state || "",
+    schemaState: lastEventTableMaterializationBudget.replayPosture?.schema?.state || "",
   });
   if (diagnosticKey !== lastEventTableMaterializationDiagnosticKey) {
     lastEventTableMaterializationDiagnosticKey = diagnosticKey;
@@ -1879,6 +1932,15 @@ function materializeFilteredEvents() {
       consumerFloor: {
         floorId: lastEventTableMaterializationBudget.consumerFloor?.floorId || "",
         lagState: lastEventTableMaterializationBudget.consumerFloor?.lagState || "",
+        eventTimeFloor: lastEventTableMaterializationBudget.consumerFloor?.eventTimeFloor || "",
+        observedTimeFloor: lastEventTableMaterializationBudget.consumerFloor?.observedTimeFloor || "",
+      },
+      replayPosture: {
+        state: lastEventTableMaterializationBudget.replayPosture?.state || "",
+        schemaState: lastEventTableMaterializationBudget.replayPosture?.schema?.state || "",
+        privacyTiers: lastEventTableMaterializationBudget.replayPosture?.privacy?.tiers || [],
+        cardinalityState: lastEventTableMaterializationBudget.replayPosture?.cardinality?.state || "",
+        samplingState: lastEventTableMaterializationBudget.replayPosture?.sampling?.state || "",
       },
     });
   }
