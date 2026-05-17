@@ -30,7 +30,11 @@ import {
   projectionUpdatedAt as sharedProjectionUpdatedAt,
   selectProjectionForNode,
 } from "../../constitute-ui/src/projection-read-model.js";
-import { loggingSurfaceAttachContext } from "./surface-app-contract.js";
+import {
+  materializationBudgetLimit,
+  requireSurfaceMaterializationBudget,
+} from "../../constitute-ui/src/surface-app-contract.js";
+import { loggingSurfaceApp, loggingSurfaceAttachContext } from "./surface-app-contract.js";
 
 const RUNTIME_ATTACH_TIMEOUT_MS = 5_000;
 const RUNTIME_CALL_TIMEOUT_MS = 15_000;
@@ -52,32 +56,31 @@ const LOGGING_SURFACE_NODES = Object.freeze([
   { path: HEALTH_NODE, nodeId: "logging.health", label: "Health", backingChannel: "logging.health" },
   { path: DASHBOARD_NODE, nodeId: "logging.dashboard", label: "Dashboard", backingChannel: "logging.dashboard" },
 ]);
-const PROJECTION_SIGNATURE_MATERIALIZATION_BUDGET = Object.freeze(assertMaterializationBudget({
-  kind: SWARM.RECORD_KIND.MATERIALIZATION_BUDGET,
-  budgetId: "logging-ui.projection-signature",
-  sourceAuthority: "runtime.projection.snapshot",
-  consumerRef: "logging-ui.projection-signature",
+const LOGGING_UI_PROJECTION_SELECTION_MATERIALIZATION_BUDGET_ID = "logging-ui.projection-selection";
+const LOGGING_UI_DASHBOARD_SHORTLIST_MATERIALIZATION_BUDGET_ID = "logging-ui.dashboard-shortlist";
+const LOGGING_UI_EVENT_TABLE_MATERIALIZATION_BUDGET_ID = "logging-ui.event-table";
+const PROJECTION_SIGNATURE_MATERIALIZATION_BUDGET = Object.freeze(requireSurfaceMaterializationBudget(loggingSurfaceApp, "logging-ui.projection-signature", {
   payloadClass: SWARM.MATERIALIZATION_PAYLOAD_CLASS.PROJECTION,
   copyRole: SWARM.MATERIALIZATION_COPY_ROLE.PROJECTION,
   transferMode: SWARM.MATERIALIZATION_TRANSFER_MODE.CLONE,
-  privacyTier: SWARM.MATERIALIZATION_PRIVACY_TIER.SAFE_PROJECTION,
-  state: SWARM.RESOURCE_POSTURE_STATE.WITHIN_BUDGET,
-  limits: { maxProjectionCount: 3, maxSignatureBytes: 64_000 },
-  snapshotPolicy: { mode: "semantic-signature" },
-  deltaPolicy: { mode: "signature-only" },
-  coalescing: { key: "projectionRuntimeKey" },
-  cardinality: { projectionKeys: 3 },
-  schema: {
-    state: SWARM.MATERIALIZATION_SCHEMA_STATE.CURRENT,
-    version: "logging-ui.projection-signature.v1",
-  },
-  issuedAt: 1,
 }));
-const LOGGING_UI_PROJECTION_SELECTION_MATERIALIZATION_BUDGET_ID = "logging-ui.projection-selection";
-const LOGGING_UI_DASHBOARD_SHORTLIST_MATERIALIZATION_BUDGET_ID = "logging-ui.dashboard-shortlist";
-const LOGGING_UI_DASHBOARD_SHORTLIST_LIMIT = 8;
-const LOGGING_UI_EVENT_TABLE_MATERIALIZATION_BUDGET_ID = "logging-ui.event-table";
-const LOGGING_UI_EVENT_TABLE_EVENT_LIMIT = 2_500;
+const LOGGING_UI_PROJECTION_SELECTION_CONTRACT_BUDGET = Object.freeze(requireSurfaceMaterializationBudget(loggingSurfaceApp, LOGGING_UI_PROJECTION_SELECTION_MATERIALIZATION_BUDGET_ID, {
+  payloadClass: SWARM.MATERIALIZATION_PAYLOAD_CLASS.PROJECTION,
+  copyRole: SWARM.MATERIALIZATION_COPY_ROLE.REFERENCE_ONLY,
+  transferMode: SWARM.MATERIALIZATION_TRANSFER_MODE.REFERENCE_ONLY,
+}));
+const LOGGING_UI_DASHBOARD_SHORTLIST_CONTRACT_BUDGET = Object.freeze(requireSurfaceMaterializationBudget(loggingSurfaceApp, LOGGING_UI_DASHBOARD_SHORTLIST_MATERIALIZATION_BUDGET_ID, {
+  payloadClass: SWARM.MATERIALIZATION_PAYLOAD_CLASS.PROJECTION,
+  copyRole: SWARM.MATERIALIZATION_COPY_ROLE.REFERENCE_ONLY,
+  transferMode: SWARM.MATERIALIZATION_TRANSFER_MODE.REFERENCE_ONLY,
+}));
+const LOGGING_UI_EVENT_TABLE_CONTRACT_BUDGET = Object.freeze(requireSurfaceMaterializationBudget(loggingSurfaceApp, LOGGING_UI_EVENT_TABLE_MATERIALIZATION_BUDGET_ID, {
+  payloadClass: SWARM.MATERIALIZATION_PAYLOAD_CLASS.PROJECTION,
+  copyRole: SWARM.MATERIALIZATION_COPY_ROLE.REFERENCE_ONLY,
+  transferMode: SWARM.MATERIALIZATION_TRANSFER_MODE.REFERENCE_ONLY,
+}));
+const LOGGING_UI_DASHBOARD_SHORTLIST_LIMIT = materializationBudgetLimit(LOGGING_UI_DASHBOARD_SHORTLIST_CONTRACT_BUDGET, "maxRenderedItems", 8);
+const LOGGING_UI_EVENT_TABLE_EVENT_LIMIT = materializationBudgetLimit(LOGGING_UI_EVENT_TABLE_CONTRACT_BUDGET, "maxItems", 2_500);
 const SYNC_STATES = Object.freeze({
   IDLE: "idle",
   SYNCING: "syncing",
@@ -1691,7 +1694,11 @@ function loggingTableColumns({ subtable = false } = {}) {
 }
 
 function projectionSelectionMaterializationBudget(nodePath, examinedCount, matchedCount, sampledAt = Date.now()) {
-  const maxProjectionCandidates = Object.keys(RUNTIME_PROJECTION_CHANNELS).length * 4;
+  const maxProjectionCandidates = materializationBudgetLimit(
+    LOGGING_UI_PROJECTION_SELECTION_CONTRACT_BUDGET,
+    "maxProjectionCount",
+    Object.keys(RUNTIME_PROJECTION_CHANNELS).length * 4,
+  );
   const overBudget = examinedCount > maxProjectionCandidates;
   return assertMaterializationBudget({
     kind: SWARM.RECORD_KIND.MATERIALIZATION_BUDGET,
@@ -1734,7 +1741,7 @@ function dashboardShortlistMaterializationBudget(sourceEvents, materializedEvent
     sourceAuthority: "runtime.logging.dashboard.projection",
     consumerRef: "logging-ui.dashboard-shortlist",
     payloadClass: SWARM.MATERIALIZATION_PAYLOAD_CLASS.PROJECTION,
-    copyRole: SWARM.MATERIALIZATION_COPY_ROLE.PROJECTION,
+    copyRole: SWARM.MATERIALIZATION_COPY_ROLE.REFERENCE_ONLY,
     transferMode: SWARM.MATERIALIZATION_TRANSFER_MODE.REFERENCE_ONLY,
     privacyTier: SWARM.MATERIALIZATION_PRIVACY_TIER.UI_PROJECTION,
     state: overBudget ? SWARM.RESOURCE_POSTURE_STATE.PRESSURE : SWARM.RESOURCE_POSTURE_STATE.WITHIN_BUDGET,
@@ -1796,7 +1803,7 @@ function eventTableMaterializationBudget(sourceEvents, materializedEvents, sampl
     sourceAuthority: "runtime.logging.events.projection",
     consumerRef: "logging-ui.events-view",
     payloadClass: SWARM.MATERIALIZATION_PAYLOAD_CLASS.PROJECTION,
-    copyRole: SWARM.MATERIALIZATION_COPY_ROLE.PROJECTION,
+    copyRole: SWARM.MATERIALIZATION_COPY_ROLE.REFERENCE_ONLY,
     transferMode: SWARM.MATERIALIZATION_TRANSFER_MODE.REFERENCE_ONLY,
     privacyTier: SWARM.MATERIALIZATION_PRIVACY_TIER.UI_PROJECTION,
     state: overBudget ? SWARM.RESOURCE_POSTURE_STATE.PRESSURE : SWARM.RESOURCE_POSTURE_STATE.WITHIN_BUDGET,
