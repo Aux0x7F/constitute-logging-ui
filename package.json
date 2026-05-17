@@ -10,8 +10,8 @@
     "test": "node --test tests/**/*.test.js"
   },
   "dependencies": {
-    "constitute-protocol": "github:Aux0x7F/constitute-protocol#main",
-    "constitute-ui": "github:Aux0x7F/constitute-ui#main"
+    "constitute-protocol": "github:Aux0x7F/constitute-protocol#codex/swarm-runtime-convergence-protocol",
+    "constitute-ui": "github:Aux0x7F/constitute-ui#codex/swarm-runtime-convergence-ui"
   },
   "devDependencies": {
     "vite": "^6.2.0"
