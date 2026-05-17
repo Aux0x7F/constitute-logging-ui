@@ -1,5 +1,20 @@
 import { SURFACE_APP, SWARM, assertSurfaceAppContract } from "../../constitute-protocol/src/index.js";
 import { defineSurfaceAppContract } from "../../constitute-ui/src/surface-app-contract.js";
+import { createRuntimeSurfaceClient } from "../../constitute-ui/src/runtime-surface-client.js";
+import {
+  createSurfaceModuleRegistry,
+  surfaceAppModuleImplementations,
+} from "../../constitute-ui/src/surface-module-registry.js";
+import {
+  projectionCoverage,
+  projectionDeltaFor,
+  projectionNodePath,
+  projectionRecordPolicyId,
+  projectionRepairFor,
+  projectionRuntimeKey,
+  projectionUpdatedAt,
+  selectProjectionForNode,
+} from "../../constitute-ui/src/projection-read-model.js";
 
 const ISSUED_AT = 1700000000;
 
@@ -151,6 +166,54 @@ export const loggingSurfaceAppContract = assertSurfaceAppContract({
 export const loggingSurfaceApp = defineSurfaceAppContract(loggingSurfaceAppContract, {
   validate: assertSurfaceAppContract,
 });
+
+export const loggingSurfaceModuleRegistry = createSurfaceModuleRegistry([
+  {
+    moduleRef: "constitute-ui/runtime-surface-client@0.1.0",
+    role: SURFACE_APP.MODULE_ROLE.RUNTIME_CLIENT,
+    version: "0.1.0",
+    primitiveRefs: ["runtime.attach", "runtime.intent"],
+    implementation: Object.freeze({ createRuntimeSurfaceClient }),
+  },
+  {
+    moduleRef: "constitute-logging-ui/projection-model@0.1.0",
+    role: SURFACE_APP.MODULE_ROLE.PROJECTION_MODEL,
+    version: "0.1.0",
+    primitiveRefs: ["projection.materialization", "materialization.budget"],
+    implementation: Object.freeze({
+      projectionCoverage,
+      projectionDeltaFor,
+      projectionNodePath,
+      projectionRecordPolicyId,
+      projectionRepairFor,
+      projectionRuntimeKey,
+      projectionUpdatedAt,
+      selectProjectionForNode,
+    }),
+  },
+  {
+    moduleRef: "constitute-logging-ui/product-view@0.1.0",
+    role: SURFACE_APP.MODULE_ROLE.PRODUCT_VIEW,
+    version: "0.1.0",
+    primitiveRefs: ["runtime.posture.render", "privacy.tier.render"],
+    implementation: Object.freeze({ surfaceRef: "constitute-logging-ui" }),
+  },
+]);
+
+export const loggingSurfaceModules = surfaceAppModuleImplementations(
+  loggingSurfaceModuleRegistry,
+  loggingSurfaceApp,
+);
+
+export const loggingRuntimeClientModule = loggingSurfaceModuleRegistry.require(
+  loggingSurfaceApp,
+  SURFACE_APP.MODULE_ROLE.RUNTIME_CLIENT,
+).implementation;
+
+export const loggingProjectionModelModule = loggingSurfaceModuleRegistry.require(
+  loggingSurfaceApp,
+  SURFACE_APP.MODULE_ROLE.PROJECTION_MODEL,
+).implementation;
 
 export const loggingSurfaceAttachContext = loggingSurfaceApp.attachContext({
   productSurface: "constitute-logging-ui",

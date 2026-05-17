@@ -8,7 +8,6 @@ import {
   renderProjectionSyncStatus,
   setConnectionStateText,
 } from "constitute-ui";
-import { createRuntimeSurfaceClient } from "../../constitute-ui/src/runtime-surface-client.js";
 import { LOGGING, SWARM, assertConsumerFloor, assertLogEventEnvelope, assertMaterializationBudget } from "constitute-protocol";
 import {
   runtimeAttachDebugInfo,
@@ -34,7 +33,11 @@ import {
   materializationBudgetLimit,
   requireSurfaceMaterializationBudget,
 } from "../../constitute-ui/src/surface-app-contract.js";
-import { loggingSurfaceApp, loggingSurfaceAttachContext } from "./surface-app-contract.js";
+import {
+  loggingRuntimeClientModule,
+  loggingSurfaceApp,
+  loggingSurfaceAttachContext,
+} from "./surface-app-contract.js";
 
 const RUNTIME_ATTACH_TIMEOUT_MS = 5_000;
 const RUNTIME_CALL_TIMEOUT_MS = 15_000;
@@ -400,7 +403,7 @@ function attachRuntime() {
     renderProjectionStatus();
     return null;
   }
-  runtimeClient = createRuntimeSurfaceClient({
+  runtimeClient = loggingRuntimeClientModule.createRuntimeSurfaceClient({
     clientId: "logging-ui",
     surface: "logging-ui",
     workerUrl: runtimeWorkerUrl(),

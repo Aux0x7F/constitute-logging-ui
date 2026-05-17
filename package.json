@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "constitute-protocol": "github:Aux0x7F/constitute-protocol#codex/swarm-runtime-convergence-protocol",
-    "constitute-ui": "github:Aux0x7F/constitute-ui#codex/swarm-runtime-convergence-ui"
+    "constitute-ui": "github:Aux0x7F/constitute-ui#codex/surface-sdk-boundary-20260517"
   },
   "devDependencies": {
     "vite": "^6.2.0"
