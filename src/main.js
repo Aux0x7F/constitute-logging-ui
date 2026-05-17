@@ -20,6 +20,16 @@ import {
   browserStorageShellContext,
   deriveRuntimeShellState,
 } from "../../constitute-account/runtime-shell-state.js";
+import {
+  projectionCoverage as sharedProjectionCoverage,
+  projectionDeltaFor as sharedProjectionDeltaFor,
+  projectionNodePath as sharedProjectionNodePath,
+  projectionRecordPolicyId as sharedProjectionRecordPolicyId,
+  projectionRepairFor as sharedProjectionRepairFor,
+  projectionRuntimeKey as sharedProjectionRuntimeKey,
+  projectionUpdatedAt as sharedProjectionUpdatedAt,
+  selectProjectionForNode,
+} from "../../constitute-ui/src/projection-read-model.js";
 import { loggingSurfaceAttachContext } from "./surface-app-contract.js";
 
 const RUNTIME_ATTACH_TIMEOUT_MS = 5_000;
@@ -563,54 +573,23 @@ function loggingNode(nodePath) {
 }
 
 function projectionForNode(projections, nodePath) {
-  if (!projections || typeof projections !== "object") return null;
   const target = String(nodePath || "").trim().toLowerCase();
   const node = loggingNode(nodePath);
-  const backingChannel = String(node?.backingChannel || "").trim();
-  const channelAdapter = RUNTIME_PROJECTION_CHANNELS[target] || "";
-  const policyId = projectionPolicyForNode(nodePath).policyId;
-  let examined = 0;
-  let matched = 0;
-  let exact = null;
-  let latest = null;
-  for (const key of Object.keys(projections)) {
-    const projection = projections[key];
-    examined += 1;
-    if (!projection || typeof projection !== "object") continue;
-    const matches = projectionNodePath(projection) === target
-      || (backingChannel && String(projection?.channelId || "").trim() === backingChannel)
-      || (!backingChannel && channelAdapter && String(projection?.channelId || "").trim() === channelAdapter);
-    if (!matches) continue;
-    matched += 1;
-    if (projectionRecordPolicyId(projection) === policyId) {
-      exact = projection;
-      break;
-    }
-    if (!latest || projectionUpdatedAt(projection) > projectionUpdatedAt(latest)) latest = projection;
-  }
-  lastProjectionSelectionMaterializationBudget = projectionSelectionMaterializationBudget(nodePath, examined, matched);
-  return exact || latest || null;
+  const selected = selectProjectionForNode(projections, target, {
+    backingChannel: String(node?.backingChannel || "").trim(),
+    channelMap: RUNTIME_PROJECTION_CHANNELS,
+    policyId: projectionPolicyForNode(nodePath).policyId,
+  });
+  lastProjectionSelectionMaterializationBudget = projectionSelectionMaterializationBudget(nodePath, selected.examined, selected.matched);
+  return selected.projection;
 }
 
 function projectionRuntimeKey(projection, fallback = "") {
-  return String(
-    projection?.nodePath
-      || projection?.payload?.nodePath
-      || projection?.channelId
-      || projection?.projectionId
-      || fallback
-      || "",
-  ).trim();
+  return sharedProjectionRuntimeKey(projection, fallback);
 }
 
 function projectionNodePath(projection) {
-  const direct = String(projection?.nodePath || projection?.payload?.nodePath || "").trim().toLowerCase();
-  if (direct) return direct;
-  const channelId = String(projection?.channelId || "").trim();
-  for (const [nodePath, channelAdapter] of Object.entries(RUNTIME_PROJECTION_CHANNELS)) {
-    if (channelId === channelAdapter) return nodePath;
-  }
-  return "";
+  return sharedProjectionNodePath(projection, { channelMap: RUNTIME_PROJECTION_CHANNELS });
 }
 
 function projectionContentSignature(projection) {
@@ -650,37 +629,16 @@ function projectionReplacesEventSet(projection) {
 }
 
 function projectionCoverage(projection = eventsProjection) {
-  if (!projection) {
-    return {
-      materializedCount: 0,
-      targetCount: 0,
-      completionRatio: 0,
-      completeSeverityBands: [],
-      oldestObservedAt: 0,
-      newestObservedAt: 0,
-      syncState: SYNC_STATES.STALE,
-    };
-  }
-  const coverage = projection?.payload?.coverage || projection?.coverage || {};
   const nodePath = String(projection?.nodePath || projection?.payload?.nodePath || "").trim().toLowerCase();
   const isEventProjection = nodePath === EVENTS_NODE || Array.isArray(projection?.payload?.events);
   const fallbackMaterialized = isEventProjection ? events.length : (projection ? 1 : 0);
-  const fallbackTarget = fallbackMaterialized;
-  const materializedCount = Number(coverage.materializedCount ?? fallbackMaterialized);
-  const targetCount = Number(coverage.targetCount ?? fallbackTarget);
-  const ratio = Number(coverage.completionRatio ?? (targetCount ? materializedCount / targetCount : 1));
-  const fallbackSyncState = projection
+  return sharedProjectionCoverage(projection, {
+    materializedFallback: fallbackMaterialized,
+    targetFallback: fallbackMaterialized,
+    syncStateFallback: projection
     ? (isEventProjection ? SYNC_STATES.SYNCING : SYNC_STATES.COMPLETE_ENOUGH)
-    : SYNC_STATES.STALE;
-  return {
-    materializedCount: Number.isFinite(materializedCount) ? materializedCount : 0,
-    targetCount: Number.isFinite(targetCount) ? targetCount : 0,
-    completionRatio: Number.isFinite(ratio) ? clamp(ratio, 0, 1) : 0,
-    completeSeverityBands: Array.isArray(coverage.completeSeverityBands) ? coverage.completeSeverityBands : [],
-    oldestObservedAt: Number(coverage.oldestObservedAt || 0),
-    newestObservedAt: Number(coverage.newestObservedAt || 0),
-    syncState: String(coverage.syncState || fallbackSyncState),
-  };
+    : SYNC_STATES.STALE,
+  });
 }
 
 function prepareProjectionSyncStatus(projection, nodePath = EVENTS_NODE) {
@@ -712,8 +670,7 @@ function prepareProjectionSyncStatus(projection, nodePath = EVENTS_NODE) {
 }
 
 function projectionDeltaFor(projection) {
-  const delta = projection?.projectionDelta || projection?.delta || projection?.payload?.projectionDelta || projection?.payload?.delta;
-  return delta && typeof delta === "object" ? delta : null;
+  return sharedProjectionDeltaFor(projection);
 }
 
 function rememberProjectionRepairRequest(repairRequest, frame = null) {
@@ -733,27 +690,15 @@ function rememberProjectionRepairRequest(repairRequest, frame = null) {
 }
 
 function projectionRepairFor(projection, nodePath = EVENTS_NODE) {
-  const direct = projection?.repairRequest || projection?.repair || projection?.payload?.repairRequest || projection?.payload?.repair;
-  if (direct && typeof direct === "object") return direct;
   const target = String(nodePath || "").trim().toLowerCase();
-  const ids = [
-    projection?.projectionId,
-    projection?.channelId,
-    projectionDeltaFor(projection)?.projectionId,
-    RUNTIME_PROJECTION_CHANNELS[target],
-    `${LOGGING_SERVICE}.${target}`,
-  ].map((value) => String(value || "").trim()).filter(Boolean);
   const edgeRequests = Array.isArray(runtimeSnapshot?.edge?.repairRequests) ? runtimeSnapshot.edge.repairRequests : [];
-  for (const id of ids) {
-    if (projectionRepairRequests.has(id)) return projectionRepairRequests.get(id).repairRequest;
-    const edgeMatch = edgeRequests.find((entry) => {
-      const request = entry?.repairRequest || entry;
-      const projectionId = String(request?.projectionId || request?.projection_id || "").trim();
-      return projectionId === id;
-    });
-    if (edgeMatch) return edgeMatch.repairRequest || edgeMatch;
-  }
-  return null;
+  return sharedProjectionRepairFor(projection, {
+    nodePath: target,
+    channelMap: RUNTIME_PROJECTION_CHANNELS,
+    service: LOGGING_SERVICE,
+    repairRequests: edgeRequests,
+    localRepairRequests: projectionRepairRequests,
+  });
 }
 
 function projectionDeltaStatusLabel(projection) {
@@ -776,16 +721,11 @@ function projectionRepairStatusLabel(projection, nodePath = EVENTS_NODE) {
 }
 
 function projectionUpdatedAt(projection) {
-  return timestampMillis(projection?.freshness?.updatedAt || projection?.retainedAt || projection?.cursor?.updatedAt || 0);
+  return sharedProjectionUpdatedAt(projection);
 }
 
 function projectionRecordPolicyId(projection) {
-  return String(
-    projection?.payload?.policy?.policyId
-      || projection?.scope?.policyId
-      || projection?.policy?.policyId
-      || "",
-  ).trim();
+  return sharedProjectionRecordPolicyId(projection);
 }
 
 function publishProjectionPolicy({ force = false } = {}) {
