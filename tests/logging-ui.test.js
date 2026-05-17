@@ -151,8 +151,14 @@ test("logging ui observes synchronized runtime projections instead of assembling
   assert.match(source, /function eventTableMaterializationBudget\(/);
   assert.match(source, /function eventTableConsumerFloor\(/);
   assert.match(source, /function eventTableReplayPosture\(/);
+  assert.match(source, /function serviceProjectionReplayPosture\(/);
+  assert.match(source, /function serviceProjectionMaterializationBudget\(/);
   assert.match(source, /materializationEventReplayPosture/);
+  assert.match(source, /upstreamPosture/);
+  assert.match(source, /upstreamConsumerFloor/);
   assert.match(source, /replayPosture/);
+  assert.match(source, /serviceReplayPosture/);
+  assert.match(source, /serviceMaterializationBudget/);
   assert.match(source, /eventObservedTimeMillis/);
   assert.match(source, /eventSchemaVersion/);
   assert.match(source, /function materializeFilteredEvents\(/);
