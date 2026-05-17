@@ -1,5 +1,20 @@
-import { SURFACE_APP, assertSurfaceAppContract } from "../../constitute-protocol/src/index.js";
+import { SURFACE_APP, SWARM, assertSurfaceAppContract } from "../../constitute-protocol/src/index.js";
 import { defineSurfaceAppContract } from "../../constitute-ui/src/surface-app-contract.js";
+import { createRuntimeSurfaceClient } from "../../constitute-ui/src/runtime-surface-client.js";
+import {
+  createSurfaceModuleRegistry,
+  surfaceAppModuleImplementations,
+} from "../../constitute-ui/src/surface-module-registry.js";
+import {
+  projectionCoverage,
+  projectionDeltaFor,
+  projectionNodePath,
+  projectionRecordPolicyId,
+  projectionRepairFor,
+  projectionRuntimeKey,
+  projectionUpdatedAt,
+  selectProjectionForNode,
+} from "../../constitute-ui/src/projection-read-model.js";
 
 const ISSUED_AT = 1700000000;
 
@@ -63,8 +78,89 @@ export const loggingSurfaceAppContract = assertSurfaceAppContract({
     { projectionId: "logging.dashboard", channelId: "logging.dashboard" },
   ],
   materializationBudgets: [
-    { budgetId: "logging-ui.event-table", maxItems: 2500 },
-    { budgetId: "logging-ui.dashboard-shortlist", maxItems: 48 },
+    {
+      kind: SWARM.RECORD_KIND.MATERIALIZATION_BUDGET,
+      budgetId: "logging-ui.projection-signature",
+      sourceAuthority: "runtime.projection.snapshot",
+      consumerRef: "logging-ui.projection-signature",
+      payloadClass: SWARM.MATERIALIZATION_PAYLOAD_CLASS.PROJECTION,
+      copyRole: SWARM.MATERIALIZATION_COPY_ROLE.PROJECTION,
+      transferMode: SWARM.MATERIALIZATION_TRANSFER_MODE.CLONE,
+      privacyTier: SWARM.MATERIALIZATION_PRIVACY_TIER.SAFE_PROJECTION,
+      state: SWARM.RESOURCE_POSTURE_STATE.WITHIN_BUDGET,
+      limits: { maxProjectionCount: 3, maxSignatureBytes: 64_000 },
+      snapshotPolicy: { mode: "semantic-signature" },
+      deltaPolicy: { mode: "signature-only" },
+      coalescing: { key: "projectionRuntimeKey" },
+      cardinality: { projectionKeys: 3 },
+      schema: { state: SWARM.MATERIALIZATION_SCHEMA_STATE.CURRENT, version: "logging-ui.projection-signature.v1" },
+      issuedAt: ISSUED_AT,
+    },
+    {
+      kind: SWARM.RECORD_KIND.MATERIALIZATION_BUDGET,
+      budgetId: "logging-ui.projection-selection",
+      sourceAuthority: "runtime.projection.snapshot",
+      consumerRef: "logging-ui.projection-selector",
+      payloadClass: SWARM.MATERIALIZATION_PAYLOAD_CLASS.PROJECTION,
+      copyRole: SWARM.MATERIALIZATION_COPY_ROLE.REFERENCE_ONLY,
+      transferMode: SWARM.MATERIALIZATION_TRANSFER_MODE.REFERENCE_ONLY,
+      privacyTier: SWARM.MATERIALIZATION_PRIVACY_TIER.SAFE_PROJECTION,
+      state: SWARM.RESOURCE_POSTURE_STATE.WITHIN_BUDGET,
+      limits: { maxProjectionCount: 3 },
+      snapshotPolicy: { mode: "single-pass-node-selection" },
+      deltaPolicy: { mode: "selection-only" },
+      coalescing: { key: "projectionRuntimeKey" },
+      cardinality: { maxNodePaths: 3 },
+      schema: { state: SWARM.MATERIALIZATION_SCHEMA_STATE.CURRENT, version: "logging-ui.projection-selection.v1" },
+      referenceRefs: ["runtime.projection.snapshot"],
+      issuedAt: ISSUED_AT,
+    },
+    {
+      kind: SWARM.RECORD_KIND.MATERIALIZATION_BUDGET,
+      budgetId: "logging-ui.event-table",
+      sourceAuthority: "runtime.logging.events.projection",
+      consumerRef: "logging-ui.events-view",
+      payloadClass: SWARM.MATERIALIZATION_PAYLOAD_CLASS.PROJECTION,
+      copyRole: SWARM.MATERIALIZATION_COPY_ROLE.REFERENCE_ONLY,
+      transferMode: SWARM.MATERIALIZATION_TRANSFER_MODE.REFERENCE_ONLY,
+      privacyTier: SWARM.MATERIALIZATION_PRIVACY_TIER.UI_PROJECTION,
+      state: SWARM.RESOURCE_POSTURE_STATE.WITHIN_BUDGET,
+      limits: {
+        maxItems: 2500,
+        maxSourceItems: 2500,
+        maxSafeFactKeys: 64,
+        maxLabelValues: 250,
+        maxEncryptedDetailRefs: 2500,
+      },
+      snapshotPolicy: { mode: "runtime-projection-owned" },
+      deltaPolicy: { mode: "coalesced-by-event-key" },
+      coalescing: { key: "eventMaterializationKey" },
+      cardinality: { maxEventKeys: 2500, maxSafeFactKeys: 64, maxLabelValues: 250, labelOverflow: "detailRef" },
+      schema: { state: SWARM.MATERIALIZATION_SCHEMA_STATE.CURRENT, version: "logging-ui.event-table.v1" },
+      referenceRefs: ["logging-ui.events"],
+      retentionClass: "ephemeral.ui-projection",
+      issuedAt: ISSUED_AT,
+    },
+    {
+      kind: SWARM.RECORD_KIND.MATERIALIZATION_BUDGET,
+      budgetId: "logging-ui.dashboard-shortlist",
+      sourceAuthority: "runtime.logging.dashboard.projection",
+      consumerRef: "logging-ui.dashboard-shortlist",
+      payloadClass: SWARM.MATERIALIZATION_PAYLOAD_CLASS.PROJECTION,
+      copyRole: SWARM.MATERIALIZATION_COPY_ROLE.REFERENCE_ONLY,
+      transferMode: SWARM.MATERIALIZATION_TRANSFER_MODE.REFERENCE_ONLY,
+      privacyTier: SWARM.MATERIALIZATION_PRIVACY_TIER.UI_PROJECTION,
+      state: SWARM.RESOURCE_POSTURE_STATE.WITHIN_BUDGET,
+      limits: { maxItems: 48, maxRenderedItems: 8 },
+      snapshotPolicy: { mode: "runtime-dashboard-or-local-reference" },
+      deltaPolicy: { mode: "coalesced-by-event-key" },
+      coalescing: { key: "eventMaterializationKey" },
+      cardinality: { maxSeverityBands: 4 },
+      schema: { state: SWARM.MATERIALIZATION_SCHEMA_STATE.CURRENT, version: "logging-ui.dashboard-shortlist.v1" },
+      referenceRefs: ["logging-ui.dashboard"],
+      retentionClass: "ephemeral.ui-projection",
+      issuedAt: ISSUED_AT,
+    },
   ],
   updatePosture: {
     state: SURFACE_APP.UPDATE_POSTURE.STATIC,
@@ -76,6 +172,54 @@ export const loggingSurfaceAppContract = assertSurfaceAppContract({
 export const loggingSurfaceApp = defineSurfaceAppContract(loggingSurfaceAppContract, {
   validate: assertSurfaceAppContract,
 });
+
+export const loggingSurfaceModuleRegistry = createSurfaceModuleRegistry([
+  {
+    moduleRef: "constitute-ui/runtime-surface-client@0.1.0",
+    role: SURFACE_APP.MODULE_ROLE.RUNTIME_CLIENT,
+    version: "0.1.0",
+    primitiveRefs: ["runtime.attach", "runtime.intent"],
+    implementation: Object.freeze({ createRuntimeSurfaceClient }),
+  },
+  {
+    moduleRef: "constitute-logging-ui/projection-model@0.1.0",
+    role: SURFACE_APP.MODULE_ROLE.PROJECTION_MODEL,
+    version: "0.1.0",
+    primitiveRefs: ["projection.materialization", "materialization.budget"],
+    implementation: Object.freeze({
+      projectionCoverage,
+      projectionDeltaFor,
+      projectionNodePath,
+      projectionRecordPolicyId,
+      projectionRepairFor,
+      projectionRuntimeKey,
+      projectionUpdatedAt,
+      selectProjectionForNode,
+    }),
+  },
+  {
+    moduleRef: "constitute-logging-ui/product-view@0.1.0",
+    role: SURFACE_APP.MODULE_ROLE.PRODUCT_VIEW,
+    version: "0.1.0",
+    primitiveRefs: ["runtime.posture.render", "privacy.tier.render"],
+    implementation: Object.freeze({ surfaceRef: "constitute-logging-ui" }),
+  },
+]);
+
+export const loggingSurfaceModules = surfaceAppModuleImplementations(
+  loggingSurfaceModuleRegistry,
+  loggingSurfaceApp,
+);
+
+export const loggingRuntimeClientModule = loggingSurfaceModuleRegistry.require(
+  loggingSurfaceApp,
+  SURFACE_APP.MODULE_ROLE.RUNTIME_CLIENT,
+).implementation;
+
+export const loggingProjectionModelModule = loggingSurfaceModuleRegistry.require(
+  loggingSurfaceApp,
+  SURFACE_APP.MODULE_ROLE.PROJECTION_MODEL,
+).implementation;
 
 export const loggingSurfaceAttachContext = loggingSurfaceApp.attachContext({
   productSurface: "constitute-logging-ui",

@@ -150,6 +150,11 @@ test("logging ui observes synchronized runtime projections instead of assembling
   assert.match(source, /LOGGING_UI_EVENT_TABLE_MATERIALIZATION_BUDGET_ID/);
   assert.match(source, /function eventTableMaterializationBudget\(/);
   assert.match(source, /function eventTableConsumerFloor\(/);
+  assert.match(source, /function eventTableReplayPosture\(/);
+  assert.match(source, /materializationEventReplayPosture/);
+  assert.match(source, /replayPosture/);
+  assert.match(source, /eventObservedTimeMillis/);
+  assert.match(source, /eventSchemaVersion/);
   assert.match(source, /function materializeFilteredEvents\(/);
   assert.match(source, /logging-ui\.event-table\.materialized/);
   assert.match(source, /assertConsumerFloor/);
@@ -260,7 +265,8 @@ test("logging ui attaches to the account-owned runtime worker contract", () => {
   assert.match(source, /runtimeSharedWorkerName/);
   assert.match(source, /accountRuntimeWorkerScriptUrl\(window\.location\.origin\)/);
   assert.match(source, /runtimeAttachDebugInfo\(window\.location\.origin\)/);
-  assert.match(source, /createRuntimeSurfaceClient/);
+  assert.match(source, /loggingRuntimeClientModule\.createRuntimeSurfaceClient/);
+  assert.doesNotMatch(source, /runtime-surface-client\.js/);
   assert.doesNotMatch(source, /new SharedWorker/);
   assert.doesNotMatch(source, /pendingRuntimeResponses/);
   assert.doesNotMatch(source, /RUNTIME_WORKER_VERSION = Object\.freeze/);
@@ -268,11 +274,20 @@ test("logging ui attaches to the account-owned runtime worker contract", () => {
 });
 
 test("logging ui declares a surface app contract", async () => {
-  const { loggingSurfaceApp, loggingSurfaceAttachContext } = await import("../src/surface-app-contract.js");
+  const {
+    loggingRuntimeClientModule,
+    loggingSurfaceApp,
+    loggingSurfaceAttachContext,
+    loggingSurfaceModuleRegistry,
+    loggingSurfaceModules,
+  } = await import("../src/surface-app-contract.js");
   assert.equal(loggingSurfaceApp.posture.state, "ready");
   assert.equal(loggingSurfaceApp.hasRole("runtimeClient"), true);
   assert.equal(loggingSurfaceApp.hasRole("projectionModel"), true);
   assert.equal(loggingSurfaceApp.hasRole("productView"), true);
+  assert.equal(loggingSurfaceModuleRegistry.kind, "surface.module.registry");
+  assert.equal(loggingSurfaceModules.state, "ready");
+  assert.equal(typeof loggingRuntimeClientModule.createRuntimeSurfaceClient, "function");
   assert.equal(loggingSurfaceAttachContext.kind, "surface.app.attachContext");
   assert.equal(loggingSurfaceAttachContext.appId, "constitute-logging-ui");
 });
@@ -283,4 +298,10 @@ test("logging ui renders resolved identity labels instead of raw ids", () => {
   assert.match(source, /accountCenterSummaryEl\.replaceChildren\(\)/);
   assert.doesNotMatch(source, /identityLabel = linked \? resolvedIdentityLabel/);
   assert.doesNotMatch(source, /handle: linked \? labelForIdentity\(identityId\)/);
+});
+
+test("logging dashboard renders runtime resource and retention posture", () => {
+  assert.match(source, /shellState\.resource\?\.state \|\| "unknown"/);
+  assert.match(source, /shellState\.retention\?\.state \|\| "unknown"/);
+  assert.match(source, /shellState\.retention\?\.releaseRequired \? "blocked" : "ready"/);
 });

@@ -8,7 +8,6 @@ import {
   renderProjectionSyncStatus,
   setConnectionStateText,
 } from "constitute-ui";
-import { createRuntimeSurfaceClient } from "../../constitute-ui/src/runtime-surface-client.js";
 import { LOGGING, SWARM, assertConsumerFloor, assertLogEventEnvelope, assertMaterializationBudget } from "constitute-protocol";
 import {
   runtimeAttachDebugInfo,
@@ -19,7 +18,7 @@ import { RUNTIME_DIAGNOSTIC_OPERATOR_PLANES, attachRuntimeDiagnostics } from "..
 import {
   browserStorageShellContext,
   deriveRuntimeShellState,
-} from "../../constitute-account/runtime-shell-state.js";
+} from "../../constitute-ui/src/runtime-shell-state.js";
 import {
   projectionCoverage as sharedProjectionCoverage,
   projectionDeltaFor as sharedProjectionDeltaFor,
@@ -30,7 +29,18 @@ import {
   projectionUpdatedAt as sharedProjectionUpdatedAt,
   selectProjectionForNode,
 } from "../../constitute-ui/src/projection-read-model.js";
-import { loggingSurfaceAttachContext } from "./surface-app-contract.js";
+import {
+  materializationBudgetRecord,
+  materializationBudgetLimit,
+  materializationConsumerFloorRecord,
+  materializationEventReplayPosture,
+  requireSurfaceMaterializationBudget,
+} from "../../constitute-ui/src/surface-app-contract.js";
+import {
+  loggingRuntimeClientModule,
+  loggingSurfaceApp,
+  loggingSurfaceAttachContext,
+} from "./surface-app-contract.js";
 
 const RUNTIME_ATTACH_TIMEOUT_MS = 5_000;
 const RUNTIME_CALL_TIMEOUT_MS = 15_000;
@@ -52,32 +62,31 @@ const LOGGING_SURFACE_NODES = Object.freeze([
   { path: HEALTH_NODE, nodeId: "logging.health", label: "Health", backingChannel: "logging.health" },
   { path: DASHBOARD_NODE, nodeId: "logging.dashboard", label: "Dashboard", backingChannel: "logging.dashboard" },
 ]);
-const PROJECTION_SIGNATURE_MATERIALIZATION_BUDGET = Object.freeze(assertMaterializationBudget({
-  kind: SWARM.RECORD_KIND.MATERIALIZATION_BUDGET,
-  budgetId: "logging-ui.projection-signature",
-  sourceAuthority: "runtime.projection.snapshot",
-  consumerRef: "logging-ui.projection-signature",
+const LOGGING_UI_PROJECTION_SELECTION_MATERIALIZATION_BUDGET_ID = "logging-ui.projection-selection";
+const LOGGING_UI_DASHBOARD_SHORTLIST_MATERIALIZATION_BUDGET_ID = "logging-ui.dashboard-shortlist";
+const LOGGING_UI_EVENT_TABLE_MATERIALIZATION_BUDGET_ID = "logging-ui.event-table";
+const PROJECTION_SIGNATURE_MATERIALIZATION_BUDGET = Object.freeze(requireSurfaceMaterializationBudget(loggingSurfaceApp, "logging-ui.projection-signature", {
   payloadClass: SWARM.MATERIALIZATION_PAYLOAD_CLASS.PROJECTION,
   copyRole: SWARM.MATERIALIZATION_COPY_ROLE.PROJECTION,
   transferMode: SWARM.MATERIALIZATION_TRANSFER_MODE.CLONE,
-  privacyTier: SWARM.MATERIALIZATION_PRIVACY_TIER.SAFE_PROJECTION,
-  state: SWARM.RESOURCE_POSTURE_STATE.WITHIN_BUDGET,
-  limits: { maxProjectionCount: 3, maxSignatureBytes: 64_000 },
-  snapshotPolicy: { mode: "semantic-signature" },
-  deltaPolicy: { mode: "signature-only" },
-  coalescing: { key: "projectionRuntimeKey" },
-  cardinality: { projectionKeys: 3 },
-  schema: {
-    state: SWARM.MATERIALIZATION_SCHEMA_STATE.CURRENT,
-    version: "logging-ui.projection-signature.v1",
-  },
-  issuedAt: 1,
 }));
-const LOGGING_UI_PROJECTION_SELECTION_MATERIALIZATION_BUDGET_ID = "logging-ui.projection-selection";
-const LOGGING_UI_DASHBOARD_SHORTLIST_MATERIALIZATION_BUDGET_ID = "logging-ui.dashboard-shortlist";
-const LOGGING_UI_DASHBOARD_SHORTLIST_LIMIT = 8;
-const LOGGING_UI_EVENT_TABLE_MATERIALIZATION_BUDGET_ID = "logging-ui.event-table";
-const LOGGING_UI_EVENT_TABLE_EVENT_LIMIT = 2_500;
+const LOGGING_UI_PROJECTION_SELECTION_CONTRACT_BUDGET = Object.freeze(requireSurfaceMaterializationBudget(loggingSurfaceApp, LOGGING_UI_PROJECTION_SELECTION_MATERIALIZATION_BUDGET_ID, {
+  payloadClass: SWARM.MATERIALIZATION_PAYLOAD_CLASS.PROJECTION,
+  copyRole: SWARM.MATERIALIZATION_COPY_ROLE.REFERENCE_ONLY,
+  transferMode: SWARM.MATERIALIZATION_TRANSFER_MODE.REFERENCE_ONLY,
+}));
+const LOGGING_UI_DASHBOARD_SHORTLIST_CONTRACT_BUDGET = Object.freeze(requireSurfaceMaterializationBudget(loggingSurfaceApp, LOGGING_UI_DASHBOARD_SHORTLIST_MATERIALIZATION_BUDGET_ID, {
+  payloadClass: SWARM.MATERIALIZATION_PAYLOAD_CLASS.PROJECTION,
+  copyRole: SWARM.MATERIALIZATION_COPY_ROLE.REFERENCE_ONLY,
+  transferMode: SWARM.MATERIALIZATION_TRANSFER_MODE.REFERENCE_ONLY,
+}));
+const LOGGING_UI_EVENT_TABLE_CONTRACT_BUDGET = Object.freeze(requireSurfaceMaterializationBudget(loggingSurfaceApp, LOGGING_UI_EVENT_TABLE_MATERIALIZATION_BUDGET_ID, {
+  payloadClass: SWARM.MATERIALIZATION_PAYLOAD_CLASS.PROJECTION,
+  copyRole: SWARM.MATERIALIZATION_COPY_ROLE.REFERENCE_ONLY,
+  transferMode: SWARM.MATERIALIZATION_TRANSFER_MODE.REFERENCE_ONLY,
+}));
+const LOGGING_UI_DASHBOARD_SHORTLIST_LIMIT = materializationBudgetLimit(LOGGING_UI_DASHBOARD_SHORTLIST_CONTRACT_BUDGET, "maxRenderedItems", 8);
+const LOGGING_UI_EVENT_TABLE_EVENT_LIMIT = materializationBudgetLimit(LOGGING_UI_EVENT_TABLE_CONTRACT_BUDGET, "maxItems", 2_500);
 const SYNC_STATES = Object.freeze({
   IDLE: "idle",
   SYNCING: "syncing",
@@ -319,6 +328,8 @@ let lastProjectionSelectionMaterializationBudget = null;
 let lastDashboardShortlistMaterializationBudget = null;
 let lastEventTableMaterializationBudget = null;
 let lastEventTableMaterializationDiagnosticKey = "";
+let runtimeSnapshotConsumerFloor = null;
+let lastRuntimeConsumerFloorDiagnosticKey = "";
 let shellChrome = null;
 const debugParams = new URLSearchParams(window.location.search || "");
 const debugEnabled = debugParams.get("debug") === "1" || debugParams.get("debug") === "true";
@@ -395,7 +406,7 @@ function attachRuntime() {
     renderProjectionStatus();
     return null;
   }
-  runtimeClient = createRuntimeSurfaceClient({
+  runtimeClient = loggingRuntimeClientModule.createRuntimeSurfaceClient({
     clientId: "logging-ui",
     surface: "logging-ui",
     workerUrl: runtimeWorkerUrl(),
@@ -451,6 +462,25 @@ function attachRuntime() {
     onSnapshot: (snapshot) => {
       absorbRuntimeSnapshot(snapshot || null);
       dismissBootSplash();
+    },
+    onConsumerFloor: (floor) => {
+      runtimeSnapshotConsumerFloor = floor && typeof floor === "object" ? floor : null;
+      const diagnosticKey = JSON.stringify({
+        floorId: runtimeSnapshotConsumerFloor?.floorId || "",
+        lagState: runtimeSnapshotConsumerFloor?.lagState || "",
+        ackFloor: runtimeSnapshotConsumerFloor?.ackFloor || "",
+        witnessFloor: runtimeSnapshotConsumerFloor?.witnessFloor || "",
+      });
+      if (diagnosticKey !== lastRuntimeConsumerFloorDiagnosticKey) {
+        lastRuntimeConsumerFloorDiagnosticKey = diagnosticKey;
+        emitDiagnostic("logging-ui.runtime.consumer-floor", {
+          floorId: runtimeSnapshotConsumerFloor?.floorId || "",
+          lagState: runtimeSnapshotConsumerFloor?.lagState || "",
+          ackFloor: runtimeSnapshotConsumerFloor?.ackFloor || "",
+          witnessFloor: runtimeSnapshotConsumerFloor?.witnessFloor || "",
+          compactionFloor: runtimeSnapshotConsumerFloor?.compactionFloor || "",
+        });
+      }
     },
     onWorkerError: () => {
       renderProjectionStatus();
@@ -1033,6 +1063,18 @@ function renderProjectionStatus() {
 
 function renderDashboard() {
   if (!dashboardCardsEl || !dashboardShortlistEl || !dashboardCoverageEl || !dashboardStorageEl) return;
+  const shellState = deriveRuntimeShellState(runtimeSnapshot, { context: browserStorageShellContext() });
+  const storagePostureRows = [
+    ["Resource", shellState.resource?.state || "unknown"],
+    ["Retention", shellState.retention?.state || "unknown"],
+    ["Release", shellState.retention?.releaseRequired ? "blocked" : "ready"],
+  ];
+  const replayPosture = lastEventTableMaterializationBudget?.replayPosture || null;
+  const replayPostureRows = [
+    ["Replay", replayPosture ? titleCaseWords(replayPosture.state || "unknown") : "pending"],
+    ["Privacy", Array.isArray(replayPosture?.privacy?.tiers) ? replayPosture.privacy.tiers.join(" + ") : ""],
+    ["Schema", replayPosture?.schema?.state || "pending"],
+  ];
   const hasEventProjection = Boolean(eventsProjection);
   const hasDashboardProjection = Boolean(dashboardProjection);
   const hasAnyProjection = hasEventProjection || hasDashboardProjection || Boolean(healthProjection);
@@ -1053,6 +1095,8 @@ function renderDashboard() {
     dashboardStorageEl.replaceChildren(...summaryRows([
       ["Status", "Awaiting projection"],
       ["Archive", ""],
+      ...replayPostureRows,
+      ...storagePostureRows,
     ]));
     return;
   }
@@ -1100,6 +1144,8 @@ function renderDashboard() {
   dashboardStorageEl.replaceChildren(...summaryRows([
     ["Status", storage.status || health.storageStatus || health.storage_status || "pending"],
     ["Archive", storage.archiveContainerId || health.archiveContainerId || health.archive_container_id || "not advertised"],
+    ...replayPostureRows,
+    ...storagePostureRows,
   ]));
 }
 
@@ -1691,18 +1737,18 @@ function loggingTableColumns({ subtable = false } = {}) {
 }
 
 function projectionSelectionMaterializationBudget(nodePath, examinedCount, matchedCount, sampledAt = Date.now()) {
-  const maxProjectionCandidates = Object.keys(RUNTIME_PROJECTION_CHANNELS).length * 4;
-  const overBudget = examinedCount > maxProjectionCandidates;
-  return assertMaterializationBudget({
-    kind: SWARM.RECORD_KIND.MATERIALIZATION_BUDGET,
+  const maxProjectionCandidates = materializationBudgetLimit(
+    LOGGING_UI_PROJECTION_SELECTION_CONTRACT_BUDGET,
+    "maxProjectionCount",
+    Object.keys(RUNTIME_PROJECTION_CHANNELS).length * 4,
+  );
+  return assertMaterializationBudget(materializationBudgetRecord(LOGGING_UI_PROJECTION_SELECTION_CONTRACT_BUDGET, {
     budgetId: `${LOGGING_UI_PROJECTION_SELECTION_MATERIALIZATION_BUDGET_ID}:${String(nodePath || "unknown").trim() || "unknown"}`,
-    sourceAuthority: "runtime.projection.snapshot",
-    consumerRef: "logging-ui.projection-selector",
-    payloadClass: SWARM.MATERIALIZATION_PAYLOAD_CLASS.PROJECTION,
-    copyRole: SWARM.MATERIALIZATION_COPY_ROLE.REFERENCE_ONLY,
-    transferMode: SWARM.MATERIALIZATION_TRANSFER_MODE.REFERENCE_ONLY,
-    privacyTier: SWARM.MATERIALIZATION_PRIVACY_TIER.UI_PROJECTION,
-    state: overBudget ? SWARM.RESOURCE_POSTURE_STATE.PRESSURE : SWARM.RESOURCE_POSTURE_STATE.WITHIN_BUDGET,
+    sourceCount: examinedCount,
+    materializedCount: matchedCount,
+    sourceLimitKey: "maxProjectionCount",
+    materializedLimitKey: "maxProjectionCount",
+    blockedReason: "loggingUiProjectionSelectionPressure",
     limits: {
       maxProjectionCandidates,
       examinedCount,
@@ -1717,27 +1763,19 @@ function projectionSelectionMaterializationBudget(nodePath, examinedCount, match
       state: SWARM.MATERIALIZATION_SCHEMA_STATE.CURRENT,
       version: "logging-ui.projection-selection.v1",
     },
-    blockedReasons: overBudget ? ["loggingUiProjectionSelectionPressure"] : [],
     referenceRefs: ["runtime.projection.snapshot"],
     retentionClass: "ephemeral.ui-index",
-    issuedAt: sampledAt,
-    releaseAfter: sampledAt,
-    expiresAt: sampledAt + 60_000,
-  });
+    sampledAt,
+  }));
 }
 
 function dashboardShortlistMaterializationBudget(sourceEvents, materializedEvents, sampledAt = Date.now()) {
-  const overBudget = materializedEvents.length > LOGGING_UI_DASHBOARD_SHORTLIST_LIMIT;
-  return assertMaterializationBudget({
-    kind: SWARM.RECORD_KIND.MATERIALIZATION_BUDGET,
-    budgetId: LOGGING_UI_DASHBOARD_SHORTLIST_MATERIALIZATION_BUDGET_ID,
-    sourceAuthority: "runtime.logging.dashboard.projection",
-    consumerRef: "logging-ui.dashboard-shortlist",
-    payloadClass: SWARM.MATERIALIZATION_PAYLOAD_CLASS.PROJECTION,
-    copyRole: SWARM.MATERIALIZATION_COPY_ROLE.PROJECTION,
-    transferMode: SWARM.MATERIALIZATION_TRANSFER_MODE.REFERENCE_ONLY,
-    privacyTier: SWARM.MATERIALIZATION_PRIVACY_TIER.UI_PROJECTION,
-    state: overBudget ? SWARM.RESOURCE_POSTURE_STATE.PRESSURE : SWARM.RESOURCE_POSTURE_STATE.WITHIN_BUDGET,
+  return assertMaterializationBudget(materializationBudgetRecord(LOGGING_UI_DASHBOARD_SHORTLIST_CONTRACT_BUDGET, {
+    sourceCount: sourceEvents.length,
+    materializedCount: materializedEvents.length,
+    sourceLimitKey: "maxItems",
+    materializedLimitKey: "maxRenderedItems",
+    blockedReason: "loggingUiDashboardShortlistPressure",
     limits: {
       maxRenderedEvents: LOGGING_UI_DASHBOARD_SHORTLIST_LIMIT,
       sourceCount: sourceEvents.length,
@@ -1751,55 +1789,66 @@ function dashboardShortlistMaterializationBudget(sourceEvents, materializedEvent
       state: SWARM.MATERIALIZATION_SCHEMA_STATE.CURRENT,
       version: "logging-ui.dashboard-shortlist.v1",
     },
-    blockedReasons: overBudget ? ["loggingUiDashboardShortlistPressure"] : [],
     referenceRefs: ["logging-ui.dashboard"],
     retentionClass: "ephemeral.ui-projection",
-    issuedAt: sampledAt,
-    releaseAfter: sampledAt,
-    expiresAt: sampledAt + 60_000,
+    sampledAt,
+  }));
+}
+
+function eventTableReplayPosture(sourceEvents, materializedEvents, sampledAt = Date.now()) {
+  return materializationEventReplayPosture(LOGGING_UI_EVENT_TABLE_CONTRACT_BUDGET, {
+    sourceEvents,
+    materializedEvents,
+    eventKey: eventMaterializationKey,
+    eventTime: eventEventTimeMillis,
+    observedTime: eventObservedTimeMillis,
+    schemaVersion: eventSchemaVersion,
+    safeFacts: (event) => event?.safeFacts || event?.safe_facts || {},
+    tags: (event) => Array.isArray(event?.tags) ? event.tags : [],
+    encryptedDetailRefs,
+    expectedSchemaVersion: LOGGING.SCHEMA_VERSION,
+    sampledAt,
+    consumerFloor: {
+      floorId: `floor:${LOGGING_UI_EVENT_TABLE_MATERIALIZATION_BUDGET_ID}`,
+      consumerRef: "logging-ui.events-view",
+      materializationId: LOGGING_UI_EVENT_TABLE_MATERIALIZATION_BUDGET_ID,
+      subjectRef: "logging.events.ui-table",
+    },
   });
 }
 
-function eventTableConsumerFloor(sourceEvents, materializedEvents, sampledAt = Date.now()) {
-  const first = materializedEvents[0] || null;
-  const last = materializedEvents[materializedEvents.length - 1] || null;
-  const lastObserved = last ? eventTimeSeconds(last) * 1000 : 0;
-  const newestObserved = first ? eventTimeSeconds(first) * 1000 : 0;
-  const overBudget = sourceEvents.length > LOGGING_UI_EVENT_TABLE_EVENT_LIMIT;
+function eventTableConsumerFloor(sourceEvents, materializedEvents, sampledAt = Date.now(), replayPosture = null) {
+  const posture = replayPosture || eventTableReplayPosture(sourceEvents, materializedEvents, sampledAt);
   return assertConsumerFloor({
-    kind: SWARM.RECORD_KIND.CONSUMER_FLOOR,
+    ...materializationConsumerFloorRecord(LOGGING_UI_EVENT_TABLE_CONTRACT_BUDGET, {
     floorId: `floor:${LOGGING_UI_EVENT_TABLE_MATERIALIZATION_BUDGET_ID}`,
     consumerRef: "logging-ui.events-view",
     materializationId: LOGGING_UI_EVENT_TABLE_MATERIALIZATION_BUDGET_ID,
     subjectRef: "logging.events.ui-table",
-    cursor: last ? eventMaterializationKey(last) : undefined,
-    ackFloor: String(materializedEvents.length),
-    witnessFloor: String(materializedEvents.length),
-    compactionFloor: String(Math.min(sourceEvents.length, LOGGING_UI_EVENT_TABLE_EVENT_LIMIT)),
-    eventTimeFloor: lastObserved || undefined,
-    observedTimeFloor: newestObserved || sampledAt,
-    lagState: overBudget ? SWARM.MATERIALIZATION_LAG_STATE.LAGGING : SWARM.MATERIALIZATION_LAG_STATE.CAUGHT_UP,
-    reason: overBudget ? "logging UI event table source count exceeds local materialization budget" : undefined,
-    replay: { mode: "ui-filter", sourceCount: sourceEvents.length },
-    redelivery: { mode: "rerender", duplicatePolicy: "eventMaterializationKey" },
-    sampledAt,
-    expiresAt: sampledAt + 60_000,
+    sourceCount: sourceEvents.length,
+    materializedCount: materializedEvents.length,
+      cursor: posture.consumerFloor?.cursor,
+      eventTimeFloor: posture.bitemporal?.eventTimeFloor,
+      observedTimeFloor: posture.bitemporal?.observedTimeFloor || sampledAt,
+    reason: sourceEvents.length > LOGGING_UI_EVENT_TABLE_EVENT_LIMIT
+      ? "logging UI event table source count exceeds local materialization budget"
+        : (posture.blockedReasons?.[0] || ""),
+      replay: posture.consumerFloor?.replay || { mode: "ui-filter", sourceCount: sourceEvents.length },
+      redelivery: posture.consumerFloor?.redelivery || { mode: "rerender", duplicatePolicy: "eventMaterializationKey" },
+      sampledAt,
+    }),
+    lagState: posture.consumerFloor?.lagState || "unknown",
   });
 }
 
 function eventTableMaterializationBudget(sourceEvents, materializedEvents, sampledAt = Date.now()) {
-  const overBudget = sourceEvents.length > LOGGING_UI_EVENT_TABLE_EVENT_LIMIT
-    || materializedEvents.length > LOGGING_UI_EVENT_TABLE_EVENT_LIMIT;
-  return assertMaterializationBudget({
-    kind: SWARM.RECORD_KIND.MATERIALIZATION_BUDGET,
-    budgetId: LOGGING_UI_EVENT_TABLE_MATERIALIZATION_BUDGET_ID,
-    sourceAuthority: "runtime.logging.events.projection",
-    consumerRef: "logging-ui.events-view",
-    payloadClass: SWARM.MATERIALIZATION_PAYLOAD_CLASS.PROJECTION,
-    copyRole: SWARM.MATERIALIZATION_COPY_ROLE.PROJECTION,
-    transferMode: SWARM.MATERIALIZATION_TRANSFER_MODE.REFERENCE_ONLY,
-    privacyTier: SWARM.MATERIALIZATION_PRIVACY_TIER.UI_PROJECTION,
-    state: overBudget ? SWARM.RESOURCE_POSTURE_STATE.PRESSURE : SWARM.RESOURCE_POSTURE_STATE.WITHIN_BUDGET,
+  const replayPosture = eventTableReplayPosture(sourceEvents, materializedEvents, sampledAt);
+  return assertMaterializationBudget(materializationBudgetRecord(LOGGING_UI_EVENT_TABLE_CONTRACT_BUDGET, {
+    sourceCount: sourceEvents.length,
+    materializedCount: materializedEvents.length,
+    sourceLimitKey: "maxSourceItems",
+    materializedLimitKey: "maxItems",
+    blockedReason: "loggingUiEventTablePressure",
     limits: {
       maxSourceEvents: LOGGING_UI_EVENT_TABLE_EVENT_LIMIT,
       maxRenderedEvents: LOGGING_UI_EVENT_TABLE_EVENT_LIMIT,
@@ -1813,20 +1862,36 @@ function eventTableMaterializationBudget(sourceEvents, materializedEvents, sampl
     cardinality: {
       maxFilterCount: FILTER_DEFINITIONS.length,
       maxVisibleTagValues: 24,
+      safeFactKeyCount: replayPosture.cardinality?.safeFactKeyCount || 0,
+      labelValueCount: replayPosture.cardinality?.labelValueCount || 0,
       highCardinalityOverflow: "encryptedDetailRef",
     },
     schema: {
-      state: SWARM.MATERIALIZATION_SCHEMA_STATE.CURRENT,
+      state: replayPosture.schema?.state === "quarantined"
+        ? SWARM.MATERIALIZATION_SCHEMA_STATE.QUARANTINED
+        : SWARM.MATERIALIZATION_SCHEMA_STATE.CURRENT,
       version: "logging-ui.event-table.v1",
+      eventSchemaVersions: replayPosture.schema?.versions || {},
     },
-    consumerFloor: eventTableConsumerFloor(sourceEvents, materializedEvents, sampledAt),
-    blockedReasons: overBudget ? ["loggingUiEventTablePressure"] : [],
+    consumerFloor: eventTableConsumerFloor(sourceEvents, materializedEvents, sampledAt, replayPosture),
+    replayPosture,
     referenceRefs: ["logging-ui.events"],
     retentionClass: "ephemeral.ui-projection",
-    issuedAt: sampledAt,
-    releaseAfter: sampledAt,
-    expiresAt: sampledAt + 60_000,
-  });
+    sampledAt,
+  }));
+}
+
+function eventEventTimeMillis(event) {
+  return timestampMillis(eventTimeSeconds(event));
+}
+
+function eventObservedTimeMillis(event) {
+  const observed = Number(event?.observedAt || event?.observed_at || 0);
+  return observed ? timestampMillis(observed) : eventEventTimeMillis(event);
+}
+
+function eventSchemaVersion(event) {
+  return event?.schemaVersion || event?.schema_version || LOGGING.SCHEMA_VERSION;
 }
 
 function materializeFilteredEvents() {
@@ -1848,6 +1913,8 @@ function materializeFilteredEvents() {
     materializedCount: materialized.length,
     activeFilterCount: activeFilters.length,
     state: lastEventTableMaterializationBudget.state,
+    replayState: lastEventTableMaterializationBudget.replayPosture?.state || "",
+    schemaState: lastEventTableMaterializationBudget.replayPosture?.schema?.state || "",
   });
   if (diagnosticKey !== lastEventTableMaterializationDiagnosticKey) {
     lastEventTableMaterializationDiagnosticKey = diagnosticKey;
@@ -1865,6 +1932,15 @@ function materializeFilteredEvents() {
       consumerFloor: {
         floorId: lastEventTableMaterializationBudget.consumerFloor?.floorId || "",
         lagState: lastEventTableMaterializationBudget.consumerFloor?.lagState || "",
+        eventTimeFloor: lastEventTableMaterializationBudget.consumerFloor?.eventTimeFloor || "",
+        observedTimeFloor: lastEventTableMaterializationBudget.consumerFloor?.observedTimeFloor || "",
+      },
+      replayPosture: {
+        state: lastEventTableMaterializationBudget.replayPosture?.state || "",
+        schemaState: lastEventTableMaterializationBudget.replayPosture?.schema?.state || "",
+        privacyTiers: lastEventTableMaterializationBudget.replayPosture?.privacy?.tiers || [],
+        cardinalityState: lastEventTableMaterializationBudget.replayPosture?.cardinality?.state || "",
+        samplingState: lastEventTableMaterializationBudget.replayPosture?.sampling?.state || "",
       },
     });
   }
