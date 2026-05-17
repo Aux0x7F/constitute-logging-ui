@@ -30,7 +30,9 @@ import {
   selectProjectionForNode,
 } from "../../constitute-ui/src/projection-read-model.js";
 import {
+  materializationBudgetRecord,
   materializationBudgetLimit,
+  materializationConsumerFloorRecord,
   requireSurfaceMaterializationBudget,
 } from "../../constitute-ui/src/surface-app-contract.js";
 import {
@@ -1731,17 +1733,13 @@ function projectionSelectionMaterializationBudget(nodePath, examinedCount, match
     "maxProjectionCount",
     Object.keys(RUNTIME_PROJECTION_CHANNELS).length * 4,
   );
-  const overBudget = examinedCount > maxProjectionCandidates;
-  return assertMaterializationBudget({
-    kind: SWARM.RECORD_KIND.MATERIALIZATION_BUDGET,
+  return assertMaterializationBudget(materializationBudgetRecord(LOGGING_UI_PROJECTION_SELECTION_CONTRACT_BUDGET, {
     budgetId: `${LOGGING_UI_PROJECTION_SELECTION_MATERIALIZATION_BUDGET_ID}:${String(nodePath || "unknown").trim() || "unknown"}`,
-    sourceAuthority: "runtime.projection.snapshot",
-    consumerRef: "logging-ui.projection-selector",
-    payloadClass: SWARM.MATERIALIZATION_PAYLOAD_CLASS.PROJECTION,
-    copyRole: SWARM.MATERIALIZATION_COPY_ROLE.REFERENCE_ONLY,
-    transferMode: SWARM.MATERIALIZATION_TRANSFER_MODE.REFERENCE_ONLY,
-    privacyTier: SWARM.MATERIALIZATION_PRIVACY_TIER.UI_PROJECTION,
-    state: overBudget ? SWARM.RESOURCE_POSTURE_STATE.PRESSURE : SWARM.RESOURCE_POSTURE_STATE.WITHIN_BUDGET,
+    sourceCount: examinedCount,
+    materializedCount: matchedCount,
+    sourceLimitKey: "maxProjectionCount",
+    materializedLimitKey: "maxProjectionCount",
+    blockedReason: "loggingUiProjectionSelectionPressure",
     limits: {
       maxProjectionCandidates,
       examinedCount,
@@ -1756,27 +1754,19 @@ function projectionSelectionMaterializationBudget(nodePath, examinedCount, match
       state: SWARM.MATERIALIZATION_SCHEMA_STATE.CURRENT,
       version: "logging-ui.projection-selection.v1",
     },
-    blockedReasons: overBudget ? ["loggingUiProjectionSelectionPressure"] : [],
     referenceRefs: ["runtime.projection.snapshot"],
     retentionClass: "ephemeral.ui-index",
-    issuedAt: sampledAt,
-    releaseAfter: sampledAt,
-    expiresAt: sampledAt + 60_000,
-  });
+    sampledAt,
+  }));
 }
 
 function dashboardShortlistMaterializationBudget(sourceEvents, materializedEvents, sampledAt = Date.now()) {
-  const overBudget = materializedEvents.length > LOGGING_UI_DASHBOARD_SHORTLIST_LIMIT;
-  return assertMaterializationBudget({
-    kind: SWARM.RECORD_KIND.MATERIALIZATION_BUDGET,
-    budgetId: LOGGING_UI_DASHBOARD_SHORTLIST_MATERIALIZATION_BUDGET_ID,
-    sourceAuthority: "runtime.logging.dashboard.projection",
-    consumerRef: "logging-ui.dashboard-shortlist",
-    payloadClass: SWARM.MATERIALIZATION_PAYLOAD_CLASS.PROJECTION,
-    copyRole: SWARM.MATERIALIZATION_COPY_ROLE.REFERENCE_ONLY,
-    transferMode: SWARM.MATERIALIZATION_TRANSFER_MODE.REFERENCE_ONLY,
-    privacyTier: SWARM.MATERIALIZATION_PRIVACY_TIER.UI_PROJECTION,
-    state: overBudget ? SWARM.RESOURCE_POSTURE_STATE.PRESSURE : SWARM.RESOURCE_POSTURE_STATE.WITHIN_BUDGET,
+  return assertMaterializationBudget(materializationBudgetRecord(LOGGING_UI_DASHBOARD_SHORTLIST_CONTRACT_BUDGET, {
+    sourceCount: sourceEvents.length,
+    materializedCount: materializedEvents.length,
+    sourceLimitKey: "maxItems",
+    materializedLimitKey: "maxRenderedItems",
+    blockedReason: "loggingUiDashboardShortlistPressure",
     limits: {
       maxRenderedEvents: LOGGING_UI_DASHBOARD_SHORTLIST_LIMIT,
       sourceCount: sourceEvents.length,
@@ -1790,13 +1780,10 @@ function dashboardShortlistMaterializationBudget(sourceEvents, materializedEvent
       state: SWARM.MATERIALIZATION_SCHEMA_STATE.CURRENT,
       version: "logging-ui.dashboard-shortlist.v1",
     },
-    blockedReasons: overBudget ? ["loggingUiDashboardShortlistPressure"] : [],
     referenceRefs: ["logging-ui.dashboard"],
     retentionClass: "ephemeral.ui-projection",
-    issuedAt: sampledAt,
-    releaseAfter: sampledAt,
-    expiresAt: sampledAt + 60_000,
-  });
+    sampledAt,
+  }));
 }
 
 function eventTableConsumerFloor(sourceEvents, materializedEvents, sampledAt = Date.now()) {
@@ -1804,41 +1791,32 @@ function eventTableConsumerFloor(sourceEvents, materializedEvents, sampledAt = D
   const last = materializedEvents[materializedEvents.length - 1] || null;
   const lastObserved = last ? eventTimeSeconds(last) * 1000 : 0;
   const newestObserved = first ? eventTimeSeconds(first) * 1000 : 0;
-  const overBudget = sourceEvents.length > LOGGING_UI_EVENT_TABLE_EVENT_LIMIT;
-  return assertConsumerFloor({
-    kind: SWARM.RECORD_KIND.CONSUMER_FLOOR,
+  return assertConsumerFloor(materializationConsumerFloorRecord(LOGGING_UI_EVENT_TABLE_CONTRACT_BUDGET, {
     floorId: `floor:${LOGGING_UI_EVENT_TABLE_MATERIALIZATION_BUDGET_ID}`,
     consumerRef: "logging-ui.events-view",
     materializationId: LOGGING_UI_EVENT_TABLE_MATERIALIZATION_BUDGET_ID,
     subjectRef: "logging.events.ui-table",
+    sourceCount: sourceEvents.length,
+    materializedCount: materializedEvents.length,
     cursor: last ? eventMaterializationKey(last) : undefined,
-    ackFloor: String(materializedEvents.length),
-    witnessFloor: String(materializedEvents.length),
-    compactionFloor: String(Math.min(sourceEvents.length, LOGGING_UI_EVENT_TABLE_EVENT_LIMIT)),
     eventTimeFloor: lastObserved || undefined,
     observedTimeFloor: newestObserved || sampledAt,
-    lagState: overBudget ? SWARM.MATERIALIZATION_LAG_STATE.LAGGING : SWARM.MATERIALIZATION_LAG_STATE.CAUGHT_UP,
-    reason: overBudget ? "logging UI event table source count exceeds local materialization budget" : undefined,
+    reason: sourceEvents.length > LOGGING_UI_EVENT_TABLE_EVENT_LIMIT
+      ? "logging UI event table source count exceeds local materialization budget"
+      : "",
     replay: { mode: "ui-filter", sourceCount: sourceEvents.length },
     redelivery: { mode: "rerender", duplicatePolicy: "eventMaterializationKey" },
     sampledAt,
-    expiresAt: sampledAt + 60_000,
-  });
+  }));
 }
 
 function eventTableMaterializationBudget(sourceEvents, materializedEvents, sampledAt = Date.now()) {
-  const overBudget = sourceEvents.length > LOGGING_UI_EVENT_TABLE_EVENT_LIMIT
-    || materializedEvents.length > LOGGING_UI_EVENT_TABLE_EVENT_LIMIT;
-  return assertMaterializationBudget({
-    kind: SWARM.RECORD_KIND.MATERIALIZATION_BUDGET,
-    budgetId: LOGGING_UI_EVENT_TABLE_MATERIALIZATION_BUDGET_ID,
-    sourceAuthority: "runtime.logging.events.projection",
-    consumerRef: "logging-ui.events-view",
-    payloadClass: SWARM.MATERIALIZATION_PAYLOAD_CLASS.PROJECTION,
-    copyRole: SWARM.MATERIALIZATION_COPY_ROLE.REFERENCE_ONLY,
-    transferMode: SWARM.MATERIALIZATION_TRANSFER_MODE.REFERENCE_ONLY,
-    privacyTier: SWARM.MATERIALIZATION_PRIVACY_TIER.UI_PROJECTION,
-    state: overBudget ? SWARM.RESOURCE_POSTURE_STATE.PRESSURE : SWARM.RESOURCE_POSTURE_STATE.WITHIN_BUDGET,
+  return assertMaterializationBudget(materializationBudgetRecord(LOGGING_UI_EVENT_TABLE_CONTRACT_BUDGET, {
+    sourceCount: sourceEvents.length,
+    materializedCount: materializedEvents.length,
+    sourceLimitKey: "maxSourceItems",
+    materializedLimitKey: "maxItems",
+    blockedReason: "loggingUiEventTablePressure",
     limits: {
       maxSourceEvents: LOGGING_UI_EVENT_TABLE_EVENT_LIMIT,
       maxRenderedEvents: LOGGING_UI_EVENT_TABLE_EVENT_LIMIT,
@@ -1859,13 +1837,10 @@ function eventTableMaterializationBudget(sourceEvents, materializedEvents, sampl
       version: "logging-ui.event-table.v1",
     },
     consumerFloor: eventTableConsumerFloor(sourceEvents, materializedEvents, sampledAt),
-    blockedReasons: overBudget ? ["loggingUiEventTablePressure"] : [],
     referenceRefs: ["logging-ui.events"],
     retentionClass: "ephemeral.ui-projection",
-    issuedAt: sampledAt,
-    releaseAfter: sampledAt,
-    expiresAt: sampledAt + 60_000,
-  });
+    sampledAt,
+  }));
 }
 
 function materializeFilteredEvents() {
