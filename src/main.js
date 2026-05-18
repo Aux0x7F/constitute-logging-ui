@@ -1160,18 +1160,24 @@ function serviceEventFabricPosture(payload = {}) {
   const accessEpochs = Array.isArray(fabric.accessEpochs) ? fabric.accessEpochs : [];
   const accessClasses = Array.isArray(fabric.accessClasses) ? fabric.accessClasses : [];
   const processorContracts = Array.isArray(fabric.processorContracts) ? fabric.processorContracts : [];
+  const securityProcessorSeeds = Array.isArray(fabric.securityProcessorSeeds) ? fabric.securityProcessorSeeds : [];
   const processorRoles = Array.isArray(fabric.processorRoles) ? fabric.processorRoles.map((role) => String(role || "").trim()).filter(Boolean) : [];
   const contentClasses = Array.isArray(fabric.contentClasses) ? fabric.contentClasses.map((entry) => String(entry || "").trim()).filter(Boolean) : [];
   const processorStates = processorContracts
     .map((contract) => String(contract?.state || "").trim())
     .filter(Boolean);
+  const securitySeedStates = securityProcessorSeeds
+    .map((seed) => String(seed?.state || "").trim())
+    .filter(Boolean);
   return {
-    state: accessGroups.length && accessClasses.length && processorContracts.length ? "declared" : "pending",
+    state: accessGroups.length && accessClasses.length && processorContracts.length && securityProcessorSeeds.length ? "declared" : "pending",
     accessGroupCount: accessGroups.length,
     accessEpochCount: accessEpochs.length,
     accessClassCount: accessClasses.length,
     processorContractCount: processorContracts.length,
+    securitySeedCount: securityProcessorSeeds.length,
     processorStates,
+    securitySeedStates,
     processorRoles,
     contentClasses,
     currentEpochId: String(fabric.currentEpochId || "").trim(),
@@ -1188,6 +1194,7 @@ function eventFabricSummaryRows(posture) {
     ["Access", `${posture.accessGroupCount} group / ${posture.accessEpochCount} epoch`],
     ["Classes", posture.contentClasses.length ? posture.contentClasses.join(" + ") : `${posture.accessClassCount} classes`],
     ["Processors", posture.processorContractCount ? `${posture.processorContractCount} contract${posture.processorContractCount === 1 ? "" : "s"}` : processors],
+    ["Security", posture.securitySeedCount ? `${posture.securitySeedCount} seed${posture.securitySeedCount === 1 ? "" : "s"}` : "pending"],
   ];
 }
 
@@ -1198,7 +1205,9 @@ function emitEventFabricPostureDiagnostic(posture) {
     accessEpochCount: posture?.accessEpochCount || 0,
     accessClassCount: posture?.accessClassCount || 0,
     processorContractCount: posture?.processorContractCount || 0,
+    securitySeedCount: posture?.securitySeedCount || 0,
     processorStates: posture?.processorStates || [],
+    securitySeedStates: posture?.securitySeedStates || [],
     processorRoles: posture?.processorRoles || [],
     currentEpochId: posture?.currentEpochId || "",
   });
@@ -1210,7 +1219,9 @@ function emitEventFabricPostureDiagnostic(posture) {
     accessEpochCount: posture?.accessEpochCount || 0,
     accessClassCount: posture?.accessClassCount || 0,
     processorContractCount: posture?.processorContractCount || 0,
+    securitySeedCount: posture?.securitySeedCount || 0,
     processorStates: posture?.processorStates || [],
+    securitySeedStates: posture?.securitySeedStates || [],
     processorRoles: posture?.processorRoles || [],
     currentEpochId: posture?.currentEpochId || "",
   });
