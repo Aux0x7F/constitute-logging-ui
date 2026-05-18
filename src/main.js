@@ -18,7 +18,7 @@ import { RUNTIME_DIAGNOSTIC_OPERATOR_PLANES, attachRuntimeDiagnostics } from "..
 import {
   browserStorageShellContext,
   deriveRuntimeShellState,
-} from "../../constitute-ui/src/runtime-shell-state.js";
+} from "constitute-ui/runtime-shell-state";
 import {
   projectionCoverage as sharedProjectionCoverage,
   projectionDeltaFor as sharedProjectionDeltaFor,
@@ -28,13 +28,13 @@ import {
   projectionRuntimeKey as sharedProjectionRuntimeKey,
   projectionUpdatedAt as sharedProjectionUpdatedAt,
   selectProjectionForNode,
-} from "../../constitute-ui/src/projection-read-model.js";
+} from "constitute-ui";
 import {
   materializationBudgetRecord,
   materializationBudgetLimit,
   requireSurfaceMaterializationBudget,
-} from "../../constitute-ui/src/surface-app-contract.js";
-import { materializeEventSet } from "../../constitute-ui/src/materialized-event-set.js";
+} from "constitute-ui/surface-app-contract";
+import { materializeEventSet } from "constitute-ui/materialized-event-set";
 import {
   loggingRuntimeClientModule,
   loggingSurfaceApp,
