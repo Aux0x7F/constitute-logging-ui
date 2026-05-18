@@ -8,9 +8,10 @@ import {
 } from "../../constitute-protocol/src/index.js";
 import {
   defineSurfaceAppContract,
-  surfaceAppRunnerPlan,
   surfaceAppBootstrapPosture,
+  surfaceAppInstancePosture,
   surfaceAppRuntimeSelectionPosture,
+  surfaceAppRunnerPlan,
   surfaceServiceManagerOperationPosture,
   surfaceServiceManagerProofDigest,
 } from "../../constitute-ui/src/surface-app-contract.js";
@@ -341,6 +342,17 @@ export const loggingServiceManagerProofDigest = surfaceServiceManagerProofDigest
   observedAt: ISSUED_AT,
 });
 
+export const loggingSurfaceAppInstancePosture = surfaceAppInstancePosture(loggingSurfaceApp, {
+  runtimeSelectionPosture: loggingSurfaceRuntimeSelectionPosture,
+  moduleBindings: loggingSurfaceModules,
+  runnerPlan: loggingSurfaceRunnerPlan,
+  bootstrapContract: loggingSurfaceBootstrapContract,
+  bootstrapPosture: loggingSurfaceBootstrapPosture,
+  serviceManagerOperationPosture: loggingServiceManagerOperationPosture,
+  serviceManagerProofDigest: loggingServiceManagerProofDigest,
+  issuedAt: ISSUED_AT,
+});
+
 export const loggingRuntimeClientModule = loggingSurfaceModules.byKey.runtimeClient.implementation;
 
 export const loggingProjectionModelModule = loggingSurfaceModules.byKey.projectionModel.implementation;
@@ -349,6 +361,7 @@ export const loggingSurfaceAttachContext = loggingSurfaceApp.attachContext({
   productSurface: "constitute-logging-ui",
   runtimeSelectionPosture: loggingSurfaceRuntimeSelectionPosture,
   runnerPlan: loggingSurfaceRunnerPlan,
+  appInstancePosture: loggingSurfaceAppInstancePosture,
   bootstrapContract: loggingSurfaceBootstrapContract,
   serviceManagerSecretBoundary: loggingServiceManagerSecretBoundary,
   bootstrapPosture: loggingSurfaceBootstrapPosture,
