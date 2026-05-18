@@ -15,7 +15,7 @@ import {
 import { createRuntimeSurfaceClient } from "../../constitute-ui/src/runtime-surface-client.js";
 import {
   createSurfaceModuleRegistry,
-  surfaceAppModuleImplementations,
+  surfaceAppModuleBindings,
 } from "../../constitute-ui/src/surface-module-registry.js";
 import {
   projectionCoverage,
@@ -235,9 +235,14 @@ export const loggingSurfaceModuleRegistry = createSurfaceModuleRegistry([
   },
 ]);
 
-export const loggingSurfaceModules = surfaceAppModuleImplementations(
+export const loggingSurfaceModules = surfaceAppModuleBindings(
   loggingSurfaceModuleRegistry,
   loggingSurfaceApp,
+  {
+    runtimeClient: SURFACE_APP.MODULE_ROLE.RUNTIME_CLIENT,
+    projectionModel: SURFACE_APP.MODULE_ROLE.PROJECTION_MODEL,
+    productView: SURFACE_APP.MODULE_ROLE.PRODUCT_VIEW,
+  },
 );
 
 export const loggingSurfaceRunnerPlan = surfaceAppRunnerPlan(loggingSurfaceApp, {
@@ -268,15 +273,9 @@ export const loggingServiceManagerProofDigest = surfaceServiceManagerProofDigest
   observedAt: ISSUED_AT,
 });
 
-export const loggingRuntimeClientModule = loggingSurfaceModuleRegistry.require(
-  loggingSurfaceApp,
-  SURFACE_APP.MODULE_ROLE.RUNTIME_CLIENT,
-).implementation;
+export const loggingRuntimeClientModule = loggingSurfaceModules.byKey.runtimeClient.implementation;
 
-export const loggingProjectionModelModule = loggingSurfaceModuleRegistry.require(
-  loggingSurfaceApp,
-  SURFACE_APP.MODULE_ROLE.PROJECTION_MODEL,
-).implementation;
+export const loggingProjectionModelModule = loggingSurfaceModules.byKey.projectionModel.implementation;
 
 export const loggingSurfaceAttachContext = loggingSurfaceApp.attachContext({
   productSurface: "constitute-logging-ui",
