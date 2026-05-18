@@ -1,5 +1,10 @@
 import { SURFACE_APP, SWARM, assertSurfaceAppContract } from "../../constitute-protocol/src/index.js";
-import { defineSurfaceAppContract } from "../../constitute-ui/src/surface-app-contract.js";
+import {
+  defineSurfaceAppContract,
+  surfaceAppBootstrapPosture,
+  surfaceServiceManagerOperationPosture,
+  surfaceServiceManagerProofDigest,
+} from "../../constitute-ui/src/surface-app-contract.js";
 import { createRuntimeSurfaceClient } from "../../constitute-ui/src/runtime-surface-client.js";
 import {
   createSurfaceModuleRegistry,
@@ -166,6 +171,23 @@ export const loggingSurfaceAppContract = assertSurfaceAppContract({
     state: SURFACE_APP.UPDATE_POSTURE.STATIC,
     checkedAt: ISSUED_AT,
   },
+  serviceManagerPosture: {
+    managerId: "manager:manual:logging-ui",
+    subjectRef: "service:logging",
+    managerRef: "manager:manual:logging-ui",
+    state: SURFACE_APP.SERVICE_MANAGER_POSTURE.MANUAL,
+    serviceRefs: ["service:logging"],
+    capabilityRefs: ["service.manage"],
+    evidenceRefs: ["build:logging-ui:local"],
+    issuedAt: ISSUED_AT,
+  },
+  secretBoundary: {
+    state: SURFACE_APP.SECRET_BOUNDARY.NOT_REQUIRED,
+  },
+  releasePosture: {
+    state: SURFACE_APP.RELEASE_POSTURE.STATIC,
+    evidenceRefs: ["build:logging-ui:local"],
+  },
   issuedAt: ISSUED_AT,
 });
 
@@ -211,6 +233,22 @@ export const loggingSurfaceModules = surfaceAppModuleImplementations(
   loggingSurfaceApp,
 );
 
+export const loggingSurfaceBootstrapPosture = surfaceAppBootstrapPosture(loggingSurfaceApp, {
+  issuedAt: ISSUED_AT,
+});
+
+export const loggingServiceManagerOperationPosture = surfaceServiceManagerOperationPosture(loggingSurfaceApp, {
+  operation: SURFACE_APP.SERVICE_MANAGER_OPERATION.HEALTH_CHECK,
+  operationId: "operation:logging-ui:bootstrap-health",
+  requestedAt: ISSUED_AT,
+});
+
+export const loggingServiceManagerProofDigest = surfaceServiceManagerProofDigest(loggingSurfaceApp, {
+  operationPosture: loggingServiceManagerOperationPosture,
+  digestId: "proof-digest:logging-ui:bootstrap",
+  observedAt: ISSUED_AT,
+});
+
 export const loggingRuntimeClientModule = loggingSurfaceModuleRegistry.require(
   loggingSurfaceApp,
   SURFACE_APP.MODULE_ROLE.RUNTIME_CLIENT,
@@ -223,4 +261,7 @@ export const loggingProjectionModelModule = loggingSurfaceModuleRegistry.require
 
 export const loggingSurfaceAttachContext = loggingSurfaceApp.attachContext({
   productSurface: "constitute-logging-ui",
+  bootstrapPosture: loggingSurfaceBootstrapPosture,
+  serviceManagerOperationPosture: loggingServiceManagerOperationPosture,
+  serviceManagerProofDigest: loggingServiceManagerProofDigest,
 });

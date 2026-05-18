@@ -1796,7 +1796,7 @@ function dashboardShortlistMaterializationBudget(sourceEvents, materializedEvent
 }
 
 function eventTableReplayPosture(sourceEvents, materializedEvents, sampledAt = Date.now()) {
-  return materializationEventReplayPosture(LOGGING_UI_EVENT_TABLE_CONTRACT_BUDGET, {
+  const localPosture = materializationEventReplayPosture(LOGGING_UI_EVENT_TABLE_CONTRACT_BUDGET, {
     sourceEvents,
     materializedEvents,
     eventKey: eventMaterializationKey,
@@ -1815,6 +1815,25 @@ function eventTableReplayPosture(sourceEvents, materializedEvents, sampledAt = D
       subjectRef: "logging.events.ui-table",
     },
   });
+  const servicePosture = serviceProjectionReplayPosture(eventsProjection);
+  if (!servicePosture) return localPosture;
+  return {
+    ...localPosture,
+    upstreamPosture: servicePosture,
+    upstreamState: servicePosture.state || "unknown",
+    upstreamConsumerFloor: servicePosture.consumerFloor || null,
+    upstreamPrivacy: servicePosture.privacy || null,
+  };
+}
+
+function serviceProjectionReplayPosture(projection = eventsProjection) {
+  const posture = projection?.payload?.replayPosture || projection?.replayPosture || null;
+  return posture && typeof posture === "object" && !Array.isArray(posture) ? posture : null;
+}
+
+function serviceProjectionMaterializationBudget(projection = eventsProjection) {
+  const budget = projection?.payload?.materializationBudget || projection?.materializationBudget || null;
+  return budget && typeof budget === "object" && !Array.isArray(budget) ? budget : null;
 }
 
 function eventTableConsumerFloor(sourceEvents, materializedEvents, sampledAt = Date.now(), replayPosture = null) {
@@ -1907,13 +1926,17 @@ function materializeFilteredEvents() {
     if (accepted) materialized.push(event);
   }
   lastEventTableMaterializationBudget = eventTableMaterializationBudget(events, materialized);
+  const serviceReplayPosture = serviceProjectionReplayPosture(eventsProjection);
+  const serviceMaterializationBudget = serviceProjectionMaterializationBudget(eventsProjection);
   const diagnosticKey = JSON.stringify({
     budgetId: lastEventTableMaterializationBudget.budgetId,
+    serviceBudgetId: serviceMaterializationBudget?.budgetId || "",
     sourceCount: events.length,
     materializedCount: materialized.length,
     activeFilterCount: activeFilters.length,
     state: lastEventTableMaterializationBudget.state,
     replayState: lastEventTableMaterializationBudget.replayPosture?.state || "",
+    serviceReplayState: serviceReplayPosture?.state || "",
     schemaState: lastEventTableMaterializationBudget.replayPosture?.schema?.state || "",
   });
   if (diagnosticKey !== lastEventTableMaterializationDiagnosticKey) {
@@ -1929,6 +1952,13 @@ function materializeFilteredEvents() {
         transferMode: lastEventTableMaterializationBudget.transferMode,
         state: lastEventTableMaterializationBudget.state,
       },
+      serviceMaterializationBudget: serviceMaterializationBudget ? {
+        budgetId: serviceMaterializationBudget.budgetId || "",
+        payloadClass: serviceMaterializationBudget.payloadClass || "",
+        copyRole: serviceMaterializationBudget.copyRole || "",
+        transferMode: serviceMaterializationBudget.transferMode || "",
+        state: serviceMaterializationBudget.state || "",
+      } : null,
       consumerFloor: {
         floorId: lastEventTableMaterializationBudget.consumerFloor?.floorId || "",
         lagState: lastEventTableMaterializationBudget.consumerFloor?.lagState || "",
@@ -1942,6 +1972,13 @@ function materializeFilteredEvents() {
         cardinalityState: lastEventTableMaterializationBudget.replayPosture?.cardinality?.state || "",
         samplingState: lastEventTableMaterializationBudget.replayPosture?.sampling?.state || "",
       },
+      serviceReplayPosture: serviceReplayPosture ? {
+        state: serviceReplayPosture.state || "",
+        schemaState: serviceReplayPosture.schema?.state || "",
+        privacyTiers: serviceReplayPosture.privacy?.tiers || [],
+        cardinalityState: serviceReplayPosture.cardinality?.state || "",
+        samplingState: serviceReplayPosture.sampling?.state || "",
+      } : null,
     });
   }
   return materialized;
