@@ -1,6 +1,13 @@
-import { SURFACE_APP, SWARM, assertSurfaceAppContract } from "../../constitute-protocol/src/index.js";
+import {
+  SURFACE_APP,
+  SWARM,
+  assertServiceManagerSecretBoundary,
+  assertSurfaceAppBootstrapContract,
+  assertSurfaceAppContract,
+} from "../../constitute-protocol/src/index.js";
 import {
   defineSurfaceAppContract,
+  surfaceAppRunnerPlan,
   surfaceAppBootstrapPosture,
   surfaceServiceManagerOperationPosture,
   surfaceServiceManagerProofDigest,
@@ -233,6 +240,18 @@ export const loggingSurfaceModules = surfaceAppModuleImplementations(
   loggingSurfaceApp,
 );
 
+export const loggingSurfaceRunnerPlan = surfaceAppRunnerPlan(loggingSurfaceApp, {
+  issuedAt: ISSUED_AT,
+});
+
+export const loggingServiceManagerSecretBoundary = assertServiceManagerSecretBoundary(
+  loggingSurfaceRunnerPlan.secretBoundary,
+);
+
+export const loggingSurfaceBootstrapContract = assertSurfaceAppBootstrapContract(
+  loggingSurfaceRunnerPlan.bootstrapContract,
+);
+
 export const loggingSurfaceBootstrapPosture = surfaceAppBootstrapPosture(loggingSurfaceApp, {
   issuedAt: ISSUED_AT,
 });
@@ -261,6 +280,9 @@ export const loggingProjectionModelModule = loggingSurfaceModuleRegistry.require
 
 export const loggingSurfaceAttachContext = loggingSurfaceApp.attachContext({
   productSurface: "constitute-logging-ui",
+  runnerPlan: loggingSurfaceRunnerPlan,
+  bootstrapContract: loggingSurfaceBootstrapContract,
+  serviceManagerSecretBoundary: loggingServiceManagerSecretBoundary,
   bootstrapPosture: loggingSurfaceBootstrapPosture,
   serviceManagerOperationPosture: loggingServiceManagerOperationPosture,
   serviceManagerProofDigest: loggingServiceManagerProofDigest,

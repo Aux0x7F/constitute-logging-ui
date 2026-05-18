@@ -193,6 +193,7 @@ test("logging ui renders retained runtime projections for events health and dash
   assert.match(source, /eventsProjection = nextEvents/);
   assert.match(source, /payloadEvents\.filter\(isValidEvent\)/);
   assert.match(source, /const payload = dashboardProjection\?\.payload \|\| \{\}/);
+  assert.match(source, /const eventFabricPosture = serviceEventFabricPosture\(payload\)/);
   assert.match(source, /const health = healthProjection\?\.payload\?\.health \|\| \{\}/);
 });
 
@@ -284,11 +285,14 @@ test("logging ui declares a surface app contract", async () => {
     loggingRuntimeClientModule,
     loggingServiceManagerOperationPosture,
     loggingServiceManagerProofDigest,
+    loggingServiceManagerSecretBoundary,
     loggingSurfaceApp,
     loggingSurfaceAttachContext,
+    loggingSurfaceBootstrapContract,
     loggingSurfaceBootstrapPosture,
     loggingSurfaceModuleRegistry,
     loggingSurfaceModules,
+    loggingSurfaceRunnerPlan,
   } = await import("../src/surface-app-contract.js");
   assert.equal(loggingSurfaceApp.posture.state, "ready");
   assert.equal(loggingSurfaceApp.hasRole("runtimeClient"), true);
@@ -300,9 +304,17 @@ test("logging ui declares a surface app contract", async () => {
   assert.equal(loggingSurfaceAttachContext.kind, "surface.app.attachContext");
   assert.equal(loggingSurfaceAttachContext.appId, "constitute-logging-ui");
   assert.equal(loggingSurfaceBootstrapPosture.state, "ready");
+  assert.equal(loggingSurfaceRunnerPlan.kind, "surface.app.runner.plan");
+  assert.equal(loggingSurfaceRunnerPlan.state, "ready");
+  assert.equal(loggingSurfaceBootstrapContract.kind, "surface.app.bootstrap.contract");
+  assert.equal(loggingSurfaceBootstrapContract.state, "ready");
+  assert.equal(loggingServiceManagerSecretBoundary.kind, "service.manager.secretBoundary");
+  assert.equal(loggingServiceManagerSecretBoundary.state, "notRequired");
   assert.equal(loggingServiceManagerOperationPosture.kind, "service.manager.operation.posture");
   assert.equal(loggingServiceManagerOperationPosture.state, "requested");
   assert.equal(loggingServiceManagerProofDigest.kind, "service.manager.proof.digest");
+  assert.equal(loggingSurfaceAttachContext.runnerPlan, loggingSurfaceRunnerPlan);
+  assert.equal(loggingSurfaceAttachContext.bootstrapContract, loggingSurfaceBootstrapContract);
   assert.equal(loggingSurfaceAttachContext.serviceManagerProofDigest, loggingServiceManagerProofDigest);
 });
 
@@ -318,4 +330,22 @@ test("logging dashboard renders runtime resource and retention posture", () => {
   assert.match(source, /shellState\.resource\?\.state \|\| "unknown"/);
   assert.match(source, /shellState\.retention\?\.state \|\| "unknown"/);
   assert.match(source, /shellState\.retention\?\.releaseRequired \? "blocked" : "ready"/);
+});
+
+test("logging dashboard renders service event fabric posture", () => {
+  assert.match(source, /function serviceEventFabricPosture\(payload = \{\}\)/);
+  assert.match(source, /function eventFabricSummaryRows\(posture\)/);
+  assert.match(source, /\["Event fabric", titleCaseWords\(posture\.state \|\| "pending"\)\]/);
+  assert.match(source, /processorContracts = Array\.isArray\(fabric\.processorContracts\) \? fabric\.processorContracts : \[\]/);
+  assert.match(source, /securityProcessorSeeds = Array\.isArray\(fabric\.securityProcessorSeeds\) \? fabric\.securityProcessorSeeds : \[\]/);
+  assert.match(source, /processorContractCount: processorContracts\.length/);
+  assert.match(source, /securitySeedCount: securityProcessorSeeds\.length/);
+  assert.match(source, /\["Security", posture\.securitySeedCount \? `\$\{posture\.securitySeedCount\} seed/);
+  assert.match(source, /processorStates: posture\?\.processorStates \|\| \[\]/);
+  assert.match(source, /securitySeedStates: posture\?\.securitySeedStates \|\| \[\]/);
+  assert.match(source, /emitDiagnostic\("logging-ui\.event-fabric\.posture"/);
+  assert.match(source, /accessGroupCount/);
+  assert.match(source, /accessClassCount/);
+  assert.match(source, /processorContractCount/);
+  assert.match(source, /securitySeedCount/);
 });

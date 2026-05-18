@@ -328,6 +328,7 @@ let lastProjectionSelectionMaterializationBudget = null;
 let lastDashboardShortlistMaterializationBudget = null;
 let lastEventTableMaterializationBudget = null;
 let lastEventTableMaterializationDiagnosticKey = "";
+let lastEventFabricDiagnosticKey = "";
 let runtimeSnapshotConsumerFloor = null;
 let lastRuntimeConsumerFloorDiagnosticKey = "";
 let shellChrome = null;
@@ -1101,6 +1102,8 @@ function renderDashboard() {
     return;
   }
   const payload = dashboardProjection?.payload || {};
+  const eventFabricPosture = serviceEventFabricPosture(payload);
+  emitEventFabricPostureDiagnostic(eventFabricPosture);
   const counts = payload.severityCounts || severityCountsFromEvents(events);
   dashboardCardsEl.replaceChildren(
     metricCard("Critical", counts.critical || 0, "critical"),
@@ -1144,9 +1147,84 @@ function renderDashboard() {
   dashboardStorageEl.replaceChildren(...summaryRows([
     ["Status", storage.status || health.storageStatus || health.storage_status || "pending"],
     ["Archive", storage.archiveContainerId || health.archiveContainerId || health.archive_container_id || "not advertised"],
+    ...eventFabricSummaryRows(eventFabricPosture),
     ...replayPostureRows,
     ...storagePostureRows,
   ]));
+}
+
+function serviceEventFabricPosture(payload = {}) {
+  const fabric = payload?.eventFabric;
+  if (!fabric || typeof fabric !== "object" || Array.isArray(fabric)) return null;
+  const accessGroups = Array.isArray(fabric.accessGroups) ? fabric.accessGroups : [];
+  const accessEpochs = Array.isArray(fabric.accessEpochs) ? fabric.accessEpochs : [];
+  const accessClasses = Array.isArray(fabric.accessClasses) ? fabric.accessClasses : [];
+  const processorContracts = Array.isArray(fabric.processorContracts) ? fabric.processorContracts : [];
+  const securityProcessorSeeds = Array.isArray(fabric.securityProcessorSeeds) ? fabric.securityProcessorSeeds : [];
+  const processorRoles = Array.isArray(fabric.processorRoles) ? fabric.processorRoles.map((role) => String(role || "").trim()).filter(Boolean) : [];
+  const contentClasses = Array.isArray(fabric.contentClasses) ? fabric.contentClasses.map((entry) => String(entry || "").trim()).filter(Boolean) : [];
+  const processorStates = processorContracts
+    .map((contract) => String(contract?.state || "").trim())
+    .filter(Boolean);
+  const securitySeedStates = securityProcessorSeeds
+    .map((seed) => String(seed?.state || "").trim())
+    .filter(Boolean);
+  return {
+    state: accessGroups.length && accessClasses.length && processorContracts.length && securityProcessorSeeds.length ? "declared" : "pending",
+    accessGroupCount: accessGroups.length,
+    accessEpochCount: accessEpochs.length,
+    accessClassCount: accessClasses.length,
+    processorContractCount: processorContracts.length,
+    securitySeedCount: securityProcessorSeeds.length,
+    processorStates,
+    securitySeedStates,
+    processorRoles,
+    contentClasses,
+    currentEpochId: String(fabric.currentEpochId || "").trim(),
+  };
+}
+
+function eventFabricSummaryRows(posture) {
+  if (!posture) return [["Event fabric", "pending"]];
+  const processors = posture.processorRoles.length
+    ? posture.processorRoles.map((role) => role.replace(/^role:/, "")).join(" + ")
+    : "pending";
+  return [
+    ["Event fabric", titleCaseWords(posture.state || "pending")],
+    ["Access", `${posture.accessGroupCount} group / ${posture.accessEpochCount} epoch`],
+    ["Classes", posture.contentClasses.length ? posture.contentClasses.join(" + ") : `${posture.accessClassCount} classes`],
+    ["Processors", posture.processorContractCount ? `${posture.processorContractCount} contract${posture.processorContractCount === 1 ? "" : "s"}` : processors],
+    ["Security", posture.securitySeedCount ? `${posture.securitySeedCount} seed${posture.securitySeedCount === 1 ? "" : "s"}` : "pending"],
+  ];
+}
+
+function emitEventFabricPostureDiagnostic(posture) {
+  const diagnosticKey = JSON.stringify({
+    state: posture?.state || "",
+    accessGroupCount: posture?.accessGroupCount || 0,
+    accessEpochCount: posture?.accessEpochCount || 0,
+    accessClassCount: posture?.accessClassCount || 0,
+    processorContractCount: posture?.processorContractCount || 0,
+    securitySeedCount: posture?.securitySeedCount || 0,
+    processorStates: posture?.processorStates || [],
+    securitySeedStates: posture?.securitySeedStates || [],
+    processorRoles: posture?.processorRoles || [],
+    currentEpochId: posture?.currentEpochId || "",
+  });
+  if (diagnosticKey === lastEventFabricDiagnosticKey) return;
+  lastEventFabricDiagnosticKey = diagnosticKey;
+  emitDiagnostic("logging-ui.event-fabric.posture", {
+    state: posture?.state || "pending",
+    accessGroupCount: posture?.accessGroupCount || 0,
+    accessEpochCount: posture?.accessEpochCount || 0,
+    accessClassCount: posture?.accessClassCount || 0,
+    processorContractCount: posture?.processorContractCount || 0,
+    securitySeedCount: posture?.securitySeedCount || 0,
+    processorStates: posture?.processorStates || [],
+    securitySeedStates: posture?.securitySeedStates || [],
+    processorRoles: posture?.processorRoles || [],
+    currentEpochId: posture?.currentEpochId || "",
+  });
 }
 
 function renderSettings() {
@@ -1838,25 +1916,29 @@ function serviceProjectionMaterializationBudget(projection = eventsProjection) {
 
 function eventTableConsumerFloor(sourceEvents, materializedEvents, sampledAt = Date.now(), replayPosture = null) {
   const posture = replayPosture || eventTableReplayPosture(sourceEvents, materializedEvents, sampledAt);
+  const postureLagState = String(posture.consumerFloor?.lagState || "unknown").trim() || "unknown";
+  const postureLagReason = String(posture.consumerFloor?.reason || posture.blockedReasons?.[0] || "").trim();
+  const lagRequiresReason = ["lagging", "stale", "blocked"].includes(postureLagState);
   return assertConsumerFloor({
     ...materializationConsumerFloorRecord(LOGGING_UI_EVENT_TABLE_CONTRACT_BUDGET, {
-    floorId: `floor:${LOGGING_UI_EVENT_TABLE_MATERIALIZATION_BUDGET_ID}`,
-    consumerRef: "logging-ui.events-view",
-    materializationId: LOGGING_UI_EVENT_TABLE_MATERIALIZATION_BUDGET_ID,
-    subjectRef: "logging.events.ui-table",
-    sourceCount: sourceEvents.length,
-    materializedCount: materializedEvents.length,
+      floorId: `floor:${LOGGING_UI_EVENT_TABLE_MATERIALIZATION_BUDGET_ID}`,
+      consumerRef: "logging-ui.events-view",
+      materializationId: LOGGING_UI_EVENT_TABLE_MATERIALIZATION_BUDGET_ID,
+      subjectRef: "logging.events.ui-table",
+      sourceCount: sourceEvents.length,
+      materializedCount: materializedEvents.length,
       cursor: posture.consumerFloor?.cursor,
       eventTimeFloor: posture.bitemporal?.eventTimeFloor,
       observedTimeFloor: posture.bitemporal?.observedTimeFloor || sampledAt,
-    reason: sourceEvents.length > LOGGING_UI_EVENT_TABLE_EVENT_LIMIT
-      ? "logging UI event table source count exceeds local materialization budget"
-        : (posture.blockedReasons?.[0] || ""),
+      reason: sourceEvents.length > LOGGING_UI_EVENT_TABLE_EVENT_LIMIT
+        ? "logging UI event table source count exceeds local materialization budget"
+        : (postureLagReason || (lagRequiresReason ? "upstream consumer floor lag" : "")),
       replay: posture.consumerFloor?.replay || { mode: "ui-filter", sourceCount: sourceEvents.length },
       redelivery: posture.consumerFloor?.redelivery || { mode: "rerender", duplicatePolicy: "eventMaterializationKey" },
       sampledAt,
     }),
-    lagState: posture.consumerFloor?.lagState || "unknown",
+    lagState: postureLagState,
+    ...(postureLagReason || lagRequiresReason ? { reason: postureLagReason || "upstream consumer floor lag" } : {}),
   });
 }
 
