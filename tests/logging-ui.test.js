@@ -336,7 +336,11 @@ test("logging dashboard renders service event fabric posture", () => {
   assert.match(source, /function serviceEventFabricPosture\(payload = \{\}\)/);
   assert.match(source, /function eventFabricSummaryRows\(posture\)/);
   assert.match(source, /\["Event fabric", titleCaseWords\(posture\.state \|\| "pending"\)\]/);
+  assert.match(source, /processorContracts = Array\.isArray\(fabric\.processorContracts\) \? fabric\.processorContracts : \[\]/);
+  assert.match(source, /processorContractCount: processorContracts\.length/);
+  assert.match(source, /processorStates: posture\?\.processorStates \|\| \[\]/);
   assert.match(source, /emitDiagnostic\("logging-ui\.event-fabric\.posture"/);
   assert.match(source, /accessGroupCount/);
   assert.match(source, /accessClassCount/);
+  assert.match(source, /processorContractCount/);
 });
