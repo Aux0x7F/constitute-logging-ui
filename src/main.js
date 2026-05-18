@@ -1916,25 +1916,29 @@ function serviceProjectionMaterializationBudget(projection = eventsProjection) {
 
 function eventTableConsumerFloor(sourceEvents, materializedEvents, sampledAt = Date.now(), replayPosture = null) {
   const posture = replayPosture || eventTableReplayPosture(sourceEvents, materializedEvents, sampledAt);
+  const postureLagState = String(posture.consumerFloor?.lagState || "unknown").trim() || "unknown";
+  const postureLagReason = String(posture.consumerFloor?.reason || posture.blockedReasons?.[0] || "").trim();
+  const lagRequiresReason = ["lagging", "stale", "blocked"].includes(postureLagState);
   return assertConsumerFloor({
     ...materializationConsumerFloorRecord(LOGGING_UI_EVENT_TABLE_CONTRACT_BUDGET, {
-    floorId: `floor:${LOGGING_UI_EVENT_TABLE_MATERIALIZATION_BUDGET_ID}`,
-    consumerRef: "logging-ui.events-view",
-    materializationId: LOGGING_UI_EVENT_TABLE_MATERIALIZATION_BUDGET_ID,
-    subjectRef: "logging.events.ui-table",
-    sourceCount: sourceEvents.length,
-    materializedCount: materializedEvents.length,
+      floorId: `floor:${LOGGING_UI_EVENT_TABLE_MATERIALIZATION_BUDGET_ID}`,
+      consumerRef: "logging-ui.events-view",
+      materializationId: LOGGING_UI_EVENT_TABLE_MATERIALIZATION_BUDGET_ID,
+      subjectRef: "logging.events.ui-table",
+      sourceCount: sourceEvents.length,
+      materializedCount: materializedEvents.length,
       cursor: posture.consumerFloor?.cursor,
       eventTimeFloor: posture.bitemporal?.eventTimeFloor,
       observedTimeFloor: posture.bitemporal?.observedTimeFloor || sampledAt,
-    reason: sourceEvents.length > LOGGING_UI_EVENT_TABLE_EVENT_LIMIT
-      ? "logging UI event table source count exceeds local materialization budget"
-        : (posture.blockedReasons?.[0] || ""),
+      reason: sourceEvents.length > LOGGING_UI_EVENT_TABLE_EVENT_LIMIT
+        ? "logging UI event table source count exceeds local materialization budget"
+        : (postureLagReason || (lagRequiresReason ? "upstream consumer floor lag" : "")),
       replay: posture.consumerFloor?.replay || { mode: "ui-filter", sourceCount: sourceEvents.length },
       redelivery: posture.consumerFloor?.redelivery || { mode: "rerender", duplicatePolicy: "eventMaterializationKey" },
       sampledAt,
     }),
-    lagState: posture.consumerFloor?.lagState || "unknown",
+    lagState: postureLagState,
+    ...(postureLagReason || lagRequiresReason ? { reason: postureLagReason || "upstream consumer floor lag" } : {}),
   });
 }
 
