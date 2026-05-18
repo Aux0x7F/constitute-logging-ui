@@ -3,8 +3,11 @@ import {
   SWARM,
   assertServiceManagerSecretBoundary,
   assertSurfaceAppBootstrapContract,
+  assertSurfaceAppInstancePosture,
   assertSurfaceAppManifest,
+  assertSurfaceAppRuntimeSelectionPosture,
   assertSurfaceAppContract,
+  assertSurfaceAppRunnerPlan,
 } from "../../constitute-protocol/src/index.js";
 import {
   defineSurfaceAppContract,
@@ -262,14 +265,14 @@ export const loggingSurfaceAppManifest = assertSurfaceAppManifest({
   issuedAt: ISSUED_AT,
 });
 
-export const loggingSurfaceRuntimeSelectionPosture = surfaceAppRuntimeSelectionPosture(
+export const loggingSurfaceRuntimeSelectionPosture = assertSurfaceAppRuntimeSelectionPosture(surfaceAppRuntimeSelectionPosture(
   loggingSurfaceAppManifest,
   [loggingSurfaceApp],
   {
     runtimeVersion: "0.1.0",
     issuedAt: ISSUED_AT,
   },
-);
+));
 
 export const loggingSurfaceModuleRegistry = createSurfaceModuleRegistry([
   {
@@ -314,9 +317,9 @@ export const loggingSurfaceModules = surfaceAppModuleBindings(
   },
 );
 
-export const loggingSurfaceRunnerPlan = surfaceAppRunnerPlan(loggingSurfaceApp, {
+export const loggingSurfaceRunnerPlan = assertSurfaceAppRunnerPlan(surfaceAppRunnerPlan(loggingSurfaceApp, {
   issuedAt: ISSUED_AT,
-});
+}));
 
 export const loggingServiceManagerSecretBoundary = assertServiceManagerSecretBoundary(
   loggingSurfaceRunnerPlan.secretBoundary,
@@ -342,7 +345,7 @@ export const loggingServiceManagerProofDigest = surfaceServiceManagerProofDigest
   observedAt: ISSUED_AT,
 });
 
-export const loggingSurfaceAppInstancePosture = surfaceAppInstancePosture(loggingSurfaceApp, {
+export const loggingSurfaceAppInstancePosture = assertSurfaceAppInstancePosture(surfaceAppInstancePosture(loggingSurfaceApp, {
   runtimeSelectionPosture: loggingSurfaceRuntimeSelectionPosture,
   moduleBindings: loggingSurfaceModules,
   runnerPlan: loggingSurfaceRunnerPlan,
@@ -351,7 +354,7 @@ export const loggingSurfaceAppInstancePosture = surfaceAppInstancePosture(loggin
   serviceManagerOperationPosture: loggingServiceManagerOperationPosture,
   serviceManagerProofDigest: loggingServiceManagerProofDigest,
   issuedAt: ISSUED_AT,
-});
+}));
 
 export const loggingRuntimeClientModule = loggingSurfaceModules.byKey.runtimeClient.implementation;
 
