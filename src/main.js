@@ -33,6 +33,7 @@ import {
   materializationBudgetRecord,
   materializationBudgetLimit,
   materializationConsumerFloorRecord,
+  materializationEnforcementPosture,
   materializationEventReplayPosture,
   requireSurfaceMaterializationBudget,
 } from "../../constitute-ui/src/surface-app-contract.js";
@@ -1071,8 +1072,10 @@ function renderDashboard() {
     ["Release", shellState.retention?.releaseRequired ? "blocked" : "ready"],
   ];
   const replayPosture = lastEventTableMaterializationBudget?.replayPosture || null;
+  const enforcementPosture = lastEventTableMaterializationBudget?.enforcementPosture || null;
   const replayPostureRows = [
     ["Replay", replayPosture ? titleCaseWords(replayPosture.state || "unknown") : "pending"],
+    ["Enforcement", enforcementPosture ? titleCaseWords(enforcementPosture.state || "unknown") : "pending"],
     ["Privacy", Array.isArray(replayPosture?.privacy?.tiers) ? replayPosture.privacy.tiers.join(" + ") : ""],
     ["Schema", replayPosture?.schema?.state || "pending"],
   ];
@@ -1944,6 +1947,22 @@ function eventTableConsumerFloor(sourceEvents, materializedEvents, sampledAt = D
 
 function eventTableMaterializationBudget(sourceEvents, materializedEvents, sampledAt = Date.now()) {
   const replayPosture = eventTableReplayPosture(sourceEvents, materializedEvents, sampledAt);
+  const serviceReplayPosture = serviceProjectionReplayPosture(eventsProjection);
+  const serviceMaterializationBudget = serviceProjectionMaterializationBudget(eventsProjection);
+  const consumerFloor = eventTableConsumerFloor(sourceEvents, materializedEvents, sampledAt, replayPosture);
+  const enforcementPosture = materializationEnforcementPosture(LOGGING_UI_EVENT_TABLE_CONTRACT_BUDGET, {
+    sourceCount: sourceEvents.length,
+    materializedCount: materializedEvents.length,
+    sourceLimitKey: "maxSourceItems",
+    materializedLimitKey: "maxItems",
+    blockedReason: "loggingUiEventTablePressure",
+    consumerFloor,
+    replayPosture,
+    upstreamPosture: serviceReplayPosture,
+    upstreamBudget: serviceMaterializationBudget,
+    referenceRefs: ["logging-ui.events"],
+    sampledAt,
+  });
   return assertMaterializationBudget(materializationBudgetRecord(LOGGING_UI_EVENT_TABLE_CONTRACT_BUDGET, {
     sourceCount: sourceEvents.length,
     materializedCount: materializedEvents.length,
@@ -1974,8 +1993,10 @@ function eventTableMaterializationBudget(sourceEvents, materializedEvents, sampl
       version: "logging-ui.event-table.v1",
       eventSchemaVersions: replayPosture.schema?.versions || {},
     },
-    consumerFloor: eventTableConsumerFloor(sourceEvents, materializedEvents, sampledAt, replayPosture),
+    consumerFloor,
     replayPosture,
+    enforcementPosture,
+    releasePosture: enforcementPosture.releasePosture,
     referenceRefs: ["logging-ui.events"],
     retentionClass: "ephemeral.ui-projection",
     sampledAt,
@@ -2018,6 +2039,7 @@ function materializeFilteredEvents() {
     activeFilterCount: activeFilters.length,
     state: lastEventTableMaterializationBudget.state,
     replayState: lastEventTableMaterializationBudget.replayPosture?.state || "",
+    enforcementState: lastEventTableMaterializationBudget.enforcementPosture?.state || "",
     serviceReplayState: serviceReplayPosture?.state || "",
     schemaState: lastEventTableMaterializationBudget.replayPosture?.schema?.state || "",
   });
@@ -2053,6 +2075,12 @@ function materializeFilteredEvents() {
         privacyTiers: lastEventTableMaterializationBudget.replayPosture?.privacy?.tiers || [],
         cardinalityState: lastEventTableMaterializationBudget.replayPosture?.cardinality?.state || "",
         samplingState: lastEventTableMaterializationBudget.replayPosture?.sampling?.state || "",
+      },
+      enforcementPosture: {
+        state: lastEventTableMaterializationBudget.enforcementPosture?.state || "",
+        blockedReasons: lastEventTableMaterializationBudget.enforcementPosture?.blockedReasons || [],
+        upstreamState: lastEventTableMaterializationBudget.enforcementPosture?.upstream?.state || "",
+        releaseState: lastEventTableMaterializationBudget.enforcementPosture?.releasePosture?.state || "",
       },
       serviceReplayPosture: serviceReplayPosture ? {
         state: serviceReplayPosture.state || "",

@@ -154,6 +154,9 @@ test("logging ui observes synchronized runtime projections instead of assembling
   assert.match(source, /function serviceProjectionReplayPosture\(/);
   assert.match(source, /function serviceProjectionMaterializationBudget\(/);
   assert.match(source, /materializationEventReplayPosture/);
+  assert.match(source, /materializationEnforcementPosture/);
+  assert.match(source, /enforcementPosture/);
+  assert.match(source, /releasePosture/);
   assert.match(source, /upstreamPosture/);
   assert.match(source, /upstreamConsumerFloor/);
   assert.match(source, /replayPosture/);
