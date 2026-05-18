@@ -3,12 +3,14 @@ import {
   SWARM,
   assertServiceManagerSecretBoundary,
   assertSurfaceAppBootstrapContract,
+  assertSurfaceAppManifest,
   assertSurfaceAppContract,
 } from "../../constitute-protocol/src/index.js";
 import {
   defineSurfaceAppContract,
   surfaceAppRunnerPlan,
   surfaceAppBootstrapPosture,
+  surfaceAppRuntimeSelectionPosture,
   surfaceServiceManagerOperationPosture,
   surfaceServiceManagerProofDigest,
 } from "../../constitute-ui/src/surface-app-contract.js";
@@ -202,6 +204,72 @@ export const loggingSurfaceApp = defineSurfaceAppContract(loggingSurfaceAppContr
   validate: assertSurfaceAppContract,
 });
 
+export const loggingSurfaceAppManifest = assertSurfaceAppManifest({
+  kind: "surface.app.manifest",
+  manifestId: "manifest:logging-ui",
+  appId: "constitute-logging-ui",
+  state: SURFACE_APP.MANIFEST_VERSION_STATE.CURRENT,
+  currentAppContractRef: "app:logging-ui",
+  currentVersion: "0.1.0",
+  defaultSourceMode: SURFACE_APP.FULFILLMENT_MODE.BUNDLED,
+  requiredModuleRoles: [
+    SURFACE_APP.MODULE_ROLE.RUNTIME_CLIENT,
+    SURFACE_APP.MODULE_ROLE.PROJECTION_MODEL,
+    SURFACE_APP.MODULE_ROLE.PRODUCT_VIEW,
+  ],
+  bundledSourceRefs: ["bundle:logging-ui@0.1.0"],
+  compatibilityWindow: {
+    minVersion: "0.1.0",
+    maxVersion: "0.1.x",
+    protocolRef: "protocol:surface-app:v1",
+  },
+  versions: [
+    {
+      appContractRef: "app:logging-ui",
+      version: "0.1.0",
+      state: SURFACE_APP.MANIFEST_VERSION_STATE.CURRENT,
+      sourceMode: SURFACE_APP.FULFILLMENT_MODE.BUNDLED,
+      requiredModuleRoles: [
+        SURFACE_APP.MODULE_ROLE.RUNTIME_CLIENT,
+        SURFACE_APP.MODULE_ROLE.PROJECTION_MODEL,
+        SURFACE_APP.MODULE_ROLE.PRODUCT_VIEW,
+      ],
+      compatibilityWindow: {
+        minVersion: "0.1.0",
+        maxVersion: "0.1.x",
+        protocolRef: "protocol:surface-app:v1",
+      },
+      bundledSourceRefs: ["bundle:logging-ui@0.1.0"],
+      grantRefs: ["grant:app:logging-ui:run"],
+      runnerRequirementRefs: ["runner:req:logging-ui"],
+      serviceManagerRequirementRefs: ["service-manager:req:logging-ui"],
+      compatibilityRefs: ["protocol:surface-app:v1"],
+      bootstrapContractRef: "bootstrap-contract:app:logging-ui",
+      releaseContractRef: "release:logging-ui:local",
+      issuedAt: ISSUED_AT,
+    },
+  ],
+  appContractRefs: ["app:logging-ui"],
+  grantRefs: ["grant:app:logging-ui:run"],
+  runnerRequirementRefs: ["runner:req:logging-ui"],
+  serviceManagerRequirementRefs: ["service-manager:req:logging-ui"],
+  compatibilityRefs: ["protocol:surface-app:v1"],
+  bootstrapContractRefs: ["bootstrap-contract:app:logging-ui"],
+  releaseContractRefs: ["release:logging-ui:local"],
+  authorityRefs: ["authority:logging-ui:local"],
+  evidenceRefs: ["build:logging-ui:local"],
+  issuedAt: ISSUED_AT,
+});
+
+export const loggingSurfaceRuntimeSelectionPosture = surfaceAppRuntimeSelectionPosture(
+  loggingSurfaceAppManifest,
+  [loggingSurfaceApp],
+  {
+    runtimeVersion: "0.1.0",
+    issuedAt: ISSUED_AT,
+  },
+);
+
 export const loggingSurfaceModuleRegistry = createSurfaceModuleRegistry([
   {
     moduleRef: "constitute-ui/runtime-surface-client@0.1.0",
@@ -237,7 +305,7 @@ export const loggingSurfaceModuleRegistry = createSurfaceModuleRegistry([
 
 export const loggingSurfaceModules = surfaceAppModuleBindings(
   loggingSurfaceModuleRegistry,
-  loggingSurfaceApp,
+  loggingSurfaceRuntimeSelectionPosture,
   {
     runtimeClient: SURFACE_APP.MODULE_ROLE.RUNTIME_CLIENT,
     projectionModel: SURFACE_APP.MODULE_ROLE.PROJECTION_MODEL,
@@ -279,6 +347,7 @@ export const loggingProjectionModelModule = loggingSurfaceModules.byKey.projecti
 
 export const loggingSurfaceAttachContext = loggingSurfaceApp.attachContext({
   productSurface: "constitute-logging-ui",
+  runtimeSelectionPosture: loggingSurfaceRuntimeSelectionPosture,
   runnerPlan: loggingSurfaceRunnerPlan,
   bootstrapContract: loggingSurfaceBootstrapContract,
   serviceManagerSecretBoundary: loggingServiceManagerSecretBoundary,

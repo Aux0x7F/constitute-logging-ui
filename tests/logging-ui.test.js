@@ -290,6 +290,7 @@ test("logging ui declares a surface app contract", async () => {
     loggingServiceManagerProofDigest,
     loggingServiceManagerSecretBoundary,
     loggingSurfaceApp,
+    loggingSurfaceRuntimeSelectionPosture,
     loggingSurfaceAttachContext,
     loggingSurfaceBootstrapContract,
     loggingSurfaceBootstrapPosture,
@@ -303,6 +304,8 @@ test("logging ui declares a surface app contract", async () => {
   assert.equal(loggingSurfaceApp.hasRole("productView"), true);
   assert.equal(loggingSurfaceModuleRegistry.kind, "surface.module.registry");
   assert.equal(loggingSurfaceModules.state, "ready");
+  assert.equal(loggingSurfaceRuntimeSelectionPosture.kind, "surface.app.runtime.selection.posture");
+  assert.equal(loggingSurfaceRuntimeSelectionPosture.state, "ready");
   assert.equal(typeof loggingRuntimeClientModule.createRuntimeSurfaceClient, "function");
   assert.equal(loggingSurfaceAttachContext.kind, "surface.app.attachContext");
   assert.equal(loggingSurfaceAttachContext.appId, "constitute-logging-ui");
@@ -316,6 +319,7 @@ test("logging ui declares a surface app contract", async () => {
   assert.equal(loggingServiceManagerOperationPosture.kind, "service.manager.operation.posture");
   assert.equal(loggingServiceManagerOperationPosture.state, "requested");
   assert.equal(loggingServiceManagerProofDigest.kind, "service.manager.proof.digest");
+  assert.equal(loggingSurfaceAttachContext.runtimeSelectionPosture, loggingSurfaceRuntimeSelectionPosture);
   assert.equal(loggingSurfaceAttachContext.runnerPlan, loggingSurfaceRunnerPlan);
   assert.equal(loggingSurfaceAttachContext.bootstrapContract, loggingSurfaceBootstrapContract);
   assert.equal(loggingSurfaceAttachContext.serviceManagerProofDigest, loggingServiceManagerProofDigest);
