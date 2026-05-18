@@ -148,14 +148,17 @@ test("logging ui observes synchronized runtime projections instead of assembling
   assert.match(source, /function mergeEvents\(/);
   assert.match(source, /function eventMaterializationKey\(/);
   assert.match(source, /LOGGING_UI_EVENT_TABLE_MATERIALIZATION_BUDGET_ID/);
+  assert.match(source, /from "\.\.\/\.\.\/constitute-ui\/src\/materialized-event-set\.js"/);
+  assert.match(source, /materializeEventSet/);
+  assert.match(source, /function materializeLoggingEventSet\(/);
   assert.match(source, /function eventTableMaterializationBudget\(/);
-  assert.match(source, /function eventTableConsumerFloor\(/);
-  assert.match(source, /function eventTableReplayPosture\(/);
+  assert.doesNotMatch(source, /function eventTableConsumerFloor\(/);
+  assert.doesNotMatch(source, /function eventTableReplayPosture\(/);
   assert.match(source, /function serviceProjectionReplayPosture\(/);
   assert.match(source, /function serviceProjectionMaterializationBudget\(/);
-  assert.match(source, /materializationEventReplayPosture/);
+  assert.match(source, /enforcementPosture/);
+  assert.match(source, /releasePosture/);
   assert.match(source, /upstreamPosture/);
-  assert.match(source, /upstreamConsumerFloor/);
   assert.match(source, /replayPosture/);
   assert.match(source, /serviceReplayPosture/);
   assert.match(source, /serviceMaterializationBudget/);
@@ -287,12 +290,15 @@ test("logging ui declares a surface app contract", async () => {
     loggingServiceManagerProofDigest,
     loggingServiceManagerSecretBoundary,
     loggingSurfaceApp,
+    loggingSurfaceAppInstancePosture,
+    loggingSurfaceRuntimeSelectionPosture,
     loggingSurfaceAttachContext,
     loggingSurfaceBootstrapContract,
     loggingSurfaceBootstrapPosture,
     loggingSurfaceModuleRegistry,
     loggingSurfaceModules,
     loggingSurfaceRunnerPlan,
+    loggingSurfaceSelectionReadModel,
   } = await import("../src/surface-app-contract.js");
   assert.equal(loggingSurfaceApp.posture.state, "ready");
   assert.equal(loggingSurfaceApp.hasRole("runtimeClient"), true);
@@ -300,9 +306,16 @@ test("logging ui declares a surface app contract", async () => {
   assert.equal(loggingSurfaceApp.hasRole("productView"), true);
   assert.equal(loggingSurfaceModuleRegistry.kind, "surface.module.registry");
   assert.equal(loggingSurfaceModules.state, "ready");
+  assert.equal(loggingSurfaceSelectionReadModel.kind, "surface.app.selection.readModel");
+  assert.equal(loggingSurfaceSelectionReadModel.state, "ready");
+  assert.equal(loggingSurfaceRuntimeSelectionPosture.kind, "surface.app.runtime.selection.posture");
+  assert.equal(loggingSurfaceRuntimeSelectionPosture.state, "ready");
   assert.equal(typeof loggingRuntimeClientModule.createRuntimeSurfaceClient, "function");
   assert.equal(loggingSurfaceAttachContext.kind, "surface.app.attachContext");
   assert.equal(loggingSurfaceAttachContext.appId, "constitute-logging-ui");
+  assert.equal(loggingSurfaceAppInstancePosture.kind, "surface.app.instance.posture");
+  assert.equal(loggingSurfaceAppInstancePosture.state, "ready");
+  assert.equal(loggingSurfaceAppInstancePosture.appId, "constitute-logging-ui");
   assert.equal(loggingSurfaceBootstrapPosture.state, "ready");
   assert.equal(loggingSurfaceRunnerPlan.kind, "surface.app.runner.plan");
   assert.equal(loggingSurfaceRunnerPlan.state, "ready");
@@ -313,6 +326,9 @@ test("logging ui declares a surface app contract", async () => {
   assert.equal(loggingServiceManagerOperationPosture.kind, "service.manager.operation.posture");
   assert.equal(loggingServiceManagerOperationPosture.state, "requested");
   assert.equal(loggingServiceManagerProofDigest.kind, "service.manager.proof.digest");
+  assert.equal(loggingSurfaceAttachContext.runtimeSelectionPosture, loggingSurfaceRuntimeSelectionPosture);
+  assert.equal(loggingSurfaceSelectionReadModel.attachContext, loggingSurfaceAttachContext);
+  assert.equal(loggingSurfaceAttachContext.appInstancePosture, loggingSurfaceAppInstancePosture);
   assert.equal(loggingSurfaceAttachContext.runnerPlan, loggingSurfaceRunnerPlan);
   assert.equal(loggingSurfaceAttachContext.bootstrapContract, loggingSurfaceBootstrapContract);
   assert.equal(loggingSurfaceAttachContext.serviceManagerProofDigest, loggingServiceManagerProofDigest);

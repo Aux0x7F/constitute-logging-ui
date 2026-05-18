@@ -32,10 +32,9 @@ import {
 import {
   materializationBudgetRecord,
   materializationBudgetLimit,
-  materializationConsumerFloorRecord,
-  materializationEventReplayPosture,
   requireSurfaceMaterializationBudget,
 } from "../../constitute-ui/src/surface-app-contract.js";
+import { materializeEventSet } from "../../constitute-ui/src/materialized-event-set.js";
 import {
   loggingRuntimeClientModule,
   loggingSurfaceApp,
@@ -487,8 +486,15 @@ function attachRuntime() {
       renderProjectionStatus();
       void ensureAccountBridge("runtime worker recovery");
     },
-    onAttachError: (error) => {
-      console.warn("[logging-ui] runtime attach failed", error);
+    onAttachPosture: (posture) => {
+      if (!posture || posture.severity === "info") return;
+      emitDiagnostic("logging-ui.runtime.attach-fallback", {
+        state: posture.state,
+        severity: posture.severity,
+        reason: posture.reason,
+      });
+    },
+    onAttachError: () => {
       renderProjectionStatus();
     },
   });
@@ -858,66 +864,28 @@ function normalizeProjectionPolicy(policy) {
 }
 
 function replaceEvents(nextEvents) {
-  const previousByKey = new Map();
-  for (const event of events) {
-    const key = eventMaterializationKey(event);
-    if (key) previousByKey.set(key, event);
-  }
-  const nextByKey = new Map();
-  let received = 0;
-  let added = 0;
-  let updated = 0;
-  for (const event of nextEvents) {
-    if (!isValidEvent(event)) continue;
-    received += 1;
-    const key = eventMaterializationKey(event);
-    if (!key) continue;
-    const existing = previousByKey.get(key);
-    if (existing) {
-      const merged = mergeEventRecord(existing, event);
-      if (JSON.stringify(merged) !== JSON.stringify(existing)) updated += 1;
-      nextByKey.set(key, merged);
-      continue;
-    }
-    nextByKey.set(key, event);
-    added += 1;
-  }
-  events = Array.from(nextByKey.values());
-  events.sort((left, right) => eventTimeSeconds(right) - eventTimeSeconds(left));
-  const removed = Math.max(0, previousByKey.size - nextByKey.size);
-  return { received, added, updated, removed, materialized: events.length };
+  const result = materializeLoggingEventSet({
+    existingEvents: events,
+    incomingEvents: nextEvents,
+    sourceEvents: nextEvents,
+    replace: true,
+    snapshotPolicy: { mode: "runtime-projection-owned" },
+    deltaPolicy: { mode: "replace-selected-reference" },
+  });
+  events = Array.from(result.events);
+  return result.merge;
 }
 
 function mergeEvents(nextEvents) {
-  const byKey = new Map();
-  for (const event of events) {
-    const key = eventMaterializationKey(event);
-    if (!key) continue;
-    byKey.set(key, event);
-  }
-  let received = 0;
-  let added = 0;
-  let updated = 0;
-  for (const event of nextEvents) {
-    if (!isValidEvent(event)) continue;
-    received += 1;
-    const key = eventMaterializationKey(event);
-    if (!key) continue;
-    const existing = byKey.get(key);
-    if (existing) {
-      const merged = mergeEventRecord(existing, event);
-      if (JSON.stringify(merged) !== JSON.stringify(existing)) {
-        byKey.set(key, merged);
-        updated += 1;
-      }
-      continue;
-    }
-    byKey.set(key, event);
-    added += 1;
-  }
-  events = Array.from(byKey.values());
-  events.sort((left, right) => eventTimeSeconds(right) - eventTimeSeconds(left));
-  return { received, added, updated, materialized: events.length };
+  const result = materializeLoggingEventSet({
+    existingEvents: events,
+    incomingEvents: nextEvents,
+    replace: false,
+    snapshotPolicy: { mode: "runtime-projection-owned" },
+    deltaPolicy: { mode: "merge-selected-reference" },
+  });
+  events = Array.from(result.events);
+  return result.merge;
 }
 
 function eventMaterializationKey(event) {
@@ -1071,8 +1039,10 @@ function renderDashboard() {
     ["Release", shellState.retention?.releaseRequired ? "blocked" : "ready"],
   ];
   const replayPosture = lastEventTableMaterializationBudget?.replayPosture || null;
+  const enforcementPosture = lastEventTableMaterializationBudget?.enforcementPosture || null;
   const replayPostureRows = [
     ["Replay", replayPosture ? titleCaseWords(replayPosture.state || "unknown") : "pending"],
+    ["Enforcement", enforcementPosture ? titleCaseWords(enforcementPosture.state || "unknown") : "pending"],
     ["Privacy", Array.isArray(replayPosture?.privacy?.tiers) ? replayPosture.privacy.tiers.join(" + ") : ""],
     ["Schema", replayPosture?.schema?.state || "pending"],
   ];
@@ -1873,37 +1843,6 @@ function dashboardShortlistMaterializationBudget(sourceEvents, materializedEvent
   }));
 }
 
-function eventTableReplayPosture(sourceEvents, materializedEvents, sampledAt = Date.now()) {
-  const localPosture = materializationEventReplayPosture(LOGGING_UI_EVENT_TABLE_CONTRACT_BUDGET, {
-    sourceEvents,
-    materializedEvents,
-    eventKey: eventMaterializationKey,
-    eventTime: eventEventTimeMillis,
-    observedTime: eventObservedTimeMillis,
-    schemaVersion: eventSchemaVersion,
-    safeFacts: (event) => event?.safeFacts || event?.safe_facts || {},
-    tags: (event) => Array.isArray(event?.tags) ? event.tags : [],
-    encryptedDetailRefs,
-    expectedSchemaVersion: LOGGING.SCHEMA_VERSION,
-    sampledAt,
-    consumerFloor: {
-      floorId: `floor:${LOGGING_UI_EVENT_TABLE_MATERIALIZATION_BUDGET_ID}`,
-      consumerRef: "logging-ui.events-view",
-      materializationId: LOGGING_UI_EVENT_TABLE_MATERIALIZATION_BUDGET_ID,
-      subjectRef: "logging.events.ui-table",
-    },
-  });
-  const servicePosture = serviceProjectionReplayPosture(eventsProjection);
-  if (!servicePosture) return localPosture;
-  return {
-    ...localPosture,
-    upstreamPosture: servicePosture,
-    upstreamState: servicePosture.state || "unknown",
-    upstreamConsumerFloor: servicePosture.consumerFloor || null,
-    upstreamPrivacy: servicePosture.privacy || null,
-  };
-}
-
 function serviceProjectionReplayPosture(projection = eventsProjection) {
   const posture = projection?.payload?.replayPosture || projection?.replayPosture || null;
   return posture && typeof posture === "object" && !Array.isArray(posture) ? posture : null;
@@ -1914,72 +1853,74 @@ function serviceProjectionMaterializationBudget(projection = eventsProjection) {
   return budget && typeof budget === "object" && !Array.isArray(budget) ? budget : null;
 }
 
-function eventTableConsumerFloor(sourceEvents, materializedEvents, sampledAt = Date.now(), replayPosture = null) {
-  const posture = replayPosture || eventTableReplayPosture(sourceEvents, materializedEvents, sampledAt);
-  const postureLagState = String(posture.consumerFloor?.lagState || "unknown").trim() || "unknown";
-  const postureLagReason = String(posture.consumerFloor?.reason || posture.blockedReasons?.[0] || "").trim();
-  const lagRequiresReason = ["lagging", "stale", "blocked"].includes(postureLagState);
-  return assertConsumerFloor({
-    ...materializationConsumerFloorRecord(LOGGING_UI_EVENT_TABLE_CONTRACT_BUDGET, {
-      floorId: `floor:${LOGGING_UI_EVENT_TABLE_MATERIALIZATION_BUDGET_ID}`,
-      consumerRef: "logging-ui.events-view",
-      materializationId: LOGGING_UI_EVENT_TABLE_MATERIALIZATION_BUDGET_ID,
-      subjectRef: "logging.events.ui-table",
-      sourceCount: sourceEvents.length,
-      materializedCount: materializedEvents.length,
-      cursor: posture.consumerFloor?.cursor,
-      eventTimeFloor: posture.bitemporal?.eventTimeFloor,
-      observedTimeFloor: posture.bitemporal?.observedTimeFloor || sampledAt,
-      reason: sourceEvents.length > LOGGING_UI_EVENT_TABLE_EVENT_LIMIT
-        ? "logging UI event table source count exceeds local materialization budget"
-        : (postureLagReason || (lagRequiresReason ? "upstream consumer floor lag" : "")),
-      replay: posture.consumerFloor?.replay || { mode: "ui-filter", sourceCount: sourceEvents.length },
-      redelivery: posture.consumerFloor?.redelivery || { mode: "rerender", duplicatePolicy: "eventMaterializationKey" },
-      sampledAt,
-    }),
-    lagState: postureLagState,
-    ...(postureLagReason || lagRequiresReason ? { reason: postureLagReason || "upstream consumer floor lag" } : {}),
-  });
-}
-
-function eventTableMaterializationBudget(sourceEvents, materializedEvents, sampledAt = Date.now()) {
-  const replayPosture = eventTableReplayPosture(sourceEvents, materializedEvents, sampledAt);
-  return assertMaterializationBudget(materializationBudgetRecord(LOGGING_UI_EVENT_TABLE_CONTRACT_BUDGET, {
-    sourceCount: sourceEvents.length,
-    materializedCount: materializedEvents.length,
+function materializeLoggingEventSet({
+  existingEvents = [],
+  incomingEvents = [],
+  sourceEvents = undefined,
+  replace = false,
+  sampledAt = Date.now(),
+  snapshotPolicy = { mode: "runtime-projection-owned" },
+  deltaPolicy = { mode: "ui-filter-reference-view" },
+} = {}) {
+  const result = materializeEventSet({
+    existingEvents,
+    incomingEvents,
+    sourceEvents,
+    replace,
+    budget: LOGGING_UI_EVENT_TABLE_CONTRACT_BUDGET,
+    validateEvent: isValidEvent,
+    eventKey: eventMaterializationKey,
+    mergeEvent: mergeEventRecord,
+    eventTime: eventEventTimeMillis,
+    observedTime: eventObservedTimeMillis,
+    schemaVersion: eventSchemaVersion,
+    safeFacts: (event) => event?.safeFacts || event?.safe_facts || {},
+    tags: (event) => Array.isArray(event?.tags) ? event.tags : [],
+    encryptedDetailRefs,
+    expectedSchemaVersion: LOGGING.SCHEMA_VERSION,
+    floorId: `floor:${LOGGING_UI_EVENT_TABLE_MATERIALIZATION_BUDGET_ID}`,
+    consumerRef: "logging-ui.events-view",
+    subjectRef: "logging.events.ui-table",
+    upstreamPosture: serviceProjectionReplayPosture(eventsProjection),
+    upstreamBudget: serviceProjectionMaterializationBudget(eventsProjection),
+    referenceRefs: ["logging-ui.events"],
     sourceLimitKey: "maxSourceItems",
     materializedLimitKey: "maxItems",
     blockedReason: "loggingUiEventTablePressure",
-    limits: {
-      maxSourceEvents: LOGGING_UI_EVENT_TABLE_EVENT_LIMIT,
-      maxRenderedEvents: LOGGING_UI_EVENT_TABLE_EVENT_LIMIT,
-      activeFilterCount: activeFilters.length,
-      sourceCount: sourceEvents.length,
-      materializedCount: materializedEvents.length,
-    },
-    snapshotPolicy: { mode: "runtime-projection-owned" },
-    deltaPolicy: { mode: "ui-filter-reference-view" },
+    snapshotPolicy,
+    deltaPolicy,
     coalescing: { key: "eventMaterializationKey" },
     cardinality: {
       maxFilterCount: FILTER_DEFINITIONS.length,
       maxVisibleTagValues: 24,
-      safeFactKeyCount: replayPosture.cardinality?.safeFactKeyCount || 0,
-      labelValueCount: replayPosture.cardinality?.labelValueCount || 0,
       highCardinalityOverflow: "encryptedDetailRef",
     },
     schema: {
-      state: replayPosture.schema?.state === "quarantined"
-        ? SWARM.MATERIALIZATION_SCHEMA_STATE.QUARANTINED
-        : SWARM.MATERIALIZATION_SCHEMA_STATE.CURRENT,
+      state: SWARM.MATERIALIZATION_SCHEMA_STATE.CURRENT,
       version: "logging-ui.event-table.v1",
-      eventSchemaVersions: replayPosture.schema?.versions || {},
     },
-    consumerFloor: eventTableConsumerFloor(sourceEvents, materializedEvents, sampledAt, replayPosture),
-    replayPosture,
-    referenceRefs: ["logging-ui.events"],
+    limits: {
+      maxSourceEvents: LOGGING_UI_EVENT_TABLE_EVENT_LIMIT,
+      maxRenderedEvents: LOGGING_UI_EVENT_TABLE_EVENT_LIMIT,
+      activeFilterCount: activeFilters.length,
+    },
     retentionClass: "ephemeral.ui-projection",
     sampledAt,
-  }));
+  });
+  return {
+    ...result,
+    consumerFloor: assertConsumerFloor(result.consumerFloor),
+    materializationBudget: assertMaterializationBudget(result.materializationBudget),
+  };
+}
+
+function eventTableMaterializationBudget(sourceEvents, materializedEvents, sampledAt = Date.now()) {
+  return materializeLoggingEventSet({
+    incomingEvents: materializedEvents,
+    sourceEvents,
+    replace: true,
+    sampledAt,
+  }).materializationBudget;
 }
 
 function eventEventTimeMillis(event) {
@@ -1996,7 +1937,7 @@ function eventSchemaVersion(event) {
 }
 
 function materializeFilteredEvents() {
-  const materialized = [];
+  const acceptedEvents = [];
   for (const event of events) {
     let accepted = true;
     for (const filter of activeFilters) {
@@ -2005,9 +1946,17 @@ function materializeFilteredEvents() {
         break;
       }
     }
-    if (accepted) materialized.push(event);
+    if (accepted) acceptedEvents.push(event);
   }
-  lastEventTableMaterializationBudget = eventTableMaterializationBudget(events, materialized);
+  const result = materializeLoggingEventSet({
+    incomingEvents: acceptedEvents,
+    sourceEvents: events,
+    replace: true,
+    snapshotPolicy: { mode: "runtime-projection-owned" },
+    deltaPolicy: { mode: "ui-filter-reference-view" },
+  });
+  const materialized = Array.from(result.events);
+  lastEventTableMaterializationBudget = result.materializationBudget;
   const serviceReplayPosture = serviceProjectionReplayPosture(eventsProjection);
   const serviceMaterializationBudget = serviceProjectionMaterializationBudget(eventsProjection);
   const diagnosticKey = JSON.stringify({
@@ -2018,6 +1967,7 @@ function materializeFilteredEvents() {
     activeFilterCount: activeFilters.length,
     state: lastEventTableMaterializationBudget.state,
     replayState: lastEventTableMaterializationBudget.replayPosture?.state || "",
+    enforcementState: lastEventTableMaterializationBudget.enforcementPosture?.state || "",
     serviceReplayState: serviceReplayPosture?.state || "",
     schemaState: lastEventTableMaterializationBudget.replayPosture?.schema?.state || "",
   });
@@ -2053,6 +2003,12 @@ function materializeFilteredEvents() {
         privacyTiers: lastEventTableMaterializationBudget.replayPosture?.privacy?.tiers || [],
         cardinalityState: lastEventTableMaterializationBudget.replayPosture?.cardinality?.state || "",
         samplingState: lastEventTableMaterializationBudget.replayPosture?.sampling?.state || "",
+      },
+      enforcementPosture: {
+        state: lastEventTableMaterializationBudget.enforcementPosture?.state || "",
+        blockedReasons: lastEventTableMaterializationBudget.enforcementPosture?.blockedReasons || [],
+        upstreamState: lastEventTableMaterializationBudget.enforcementPosture?.upstream?.state || "",
+        releaseState: lastEventTableMaterializationBudget.enforcementPosture?.releasePosture?.state || "",
       },
       serviceReplayPosture: serviceReplayPosture ? {
         state: serviceReplayPosture.state || "",
