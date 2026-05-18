@@ -488,8 +488,15 @@ function attachRuntime() {
       renderProjectionStatus();
       void ensureAccountBridge("runtime worker recovery");
     },
-    onAttachError: (error) => {
-      console.warn("[logging-ui] runtime attach failed", error);
+    onAttachPosture: (posture) => {
+      if (!posture || posture.severity === "info") return;
+      emitDiagnostic("logging-ui.runtime.attach-fallback", {
+        state: posture.state,
+        severity: posture.severity,
+        reason: posture.reason,
+      });
+    },
+    onAttachError: () => {
       renderProjectionStatus();
     },
   });
