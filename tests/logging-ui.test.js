@@ -193,6 +193,7 @@ test("logging ui renders retained runtime projections for events health and dash
   assert.match(source, /eventsProjection = nextEvents/);
   assert.match(source, /payloadEvents\.filter\(isValidEvent\)/);
   assert.match(source, /const payload = dashboardProjection\?\.payload \|\| \{\}/);
+  assert.match(source, /const eventFabricPosture = serviceEventFabricPosture\(payload\)/);
   assert.match(source, /const health = healthProjection\?\.payload\?\.health \|\| \{\}/);
 });
 
@@ -329,4 +330,13 @@ test("logging dashboard renders runtime resource and retention posture", () => {
   assert.match(source, /shellState\.resource\?\.state \|\| "unknown"/);
   assert.match(source, /shellState\.retention\?\.state \|\| "unknown"/);
   assert.match(source, /shellState\.retention\?\.releaseRequired \? "blocked" : "ready"/);
+});
+
+test("logging dashboard renders service event fabric posture", () => {
+  assert.match(source, /function serviceEventFabricPosture\(payload = \{\}\)/);
+  assert.match(source, /function eventFabricSummaryRows\(posture\)/);
+  assert.match(source, /\["Event fabric", titleCaseWords\(posture\.state \|\| "pending"\)\]/);
+  assert.match(source, /emitDiagnostic\("logging-ui\.event-fabric\.posture"/);
+  assert.match(source, /accessGroupCount/);
+  assert.match(source, /accessClassCount/);
 });

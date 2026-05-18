@@ -328,6 +328,7 @@ let lastProjectionSelectionMaterializationBudget = null;
 let lastDashboardShortlistMaterializationBudget = null;
 let lastEventTableMaterializationBudget = null;
 let lastEventTableMaterializationDiagnosticKey = "";
+let lastEventFabricDiagnosticKey = "";
 let runtimeSnapshotConsumerFloor = null;
 let lastRuntimeConsumerFloorDiagnosticKey = "";
 let shellChrome = null;
@@ -1101,6 +1102,8 @@ function renderDashboard() {
     return;
   }
   const payload = dashboardProjection?.payload || {};
+  const eventFabricPosture = serviceEventFabricPosture(payload);
+  emitEventFabricPostureDiagnostic(eventFabricPosture);
   const counts = payload.severityCounts || severityCountsFromEvents(events);
   dashboardCardsEl.replaceChildren(
     metricCard("Critical", counts.critical || 0, "critical"),
@@ -1144,9 +1147,63 @@ function renderDashboard() {
   dashboardStorageEl.replaceChildren(...summaryRows([
     ["Status", storage.status || health.storageStatus || health.storage_status || "pending"],
     ["Archive", storage.archiveContainerId || health.archiveContainerId || health.archive_container_id || "not advertised"],
+    ...eventFabricSummaryRows(eventFabricPosture),
     ...replayPostureRows,
     ...storagePostureRows,
   ]));
+}
+
+function serviceEventFabricPosture(payload = {}) {
+  const fabric = payload?.eventFabric;
+  if (!fabric || typeof fabric !== "object" || Array.isArray(fabric)) return null;
+  const accessGroups = Array.isArray(fabric.accessGroups) ? fabric.accessGroups : [];
+  const accessEpochs = Array.isArray(fabric.accessEpochs) ? fabric.accessEpochs : [];
+  const accessClasses = Array.isArray(fabric.accessClasses) ? fabric.accessClasses : [];
+  const processorRoles = Array.isArray(fabric.processorRoles) ? fabric.processorRoles.map((role) => String(role || "").trim()).filter(Boolean) : [];
+  const contentClasses = Array.isArray(fabric.contentClasses) ? fabric.contentClasses.map((entry) => String(entry || "").trim()).filter(Boolean) : [];
+  return {
+    state: accessGroups.length && accessClasses.length ? "declared" : "pending",
+    accessGroupCount: accessGroups.length,
+    accessEpochCount: accessEpochs.length,
+    accessClassCount: accessClasses.length,
+    processorRoles,
+    contentClasses,
+    currentEpochId: String(fabric.currentEpochId || "").trim(),
+  };
+}
+
+function eventFabricSummaryRows(posture) {
+  if (!posture) return [["Event fabric", "pending"]];
+  const processors = posture.processorRoles.length
+    ? posture.processorRoles.map((role) => role.replace(/^role:/, "")).join(" + ")
+    : "pending";
+  return [
+    ["Event fabric", titleCaseWords(posture.state || "pending")],
+    ["Access", `${posture.accessGroupCount} group / ${posture.accessEpochCount} epoch`],
+    ["Classes", posture.contentClasses.length ? posture.contentClasses.join(" + ") : `${posture.accessClassCount} classes`],
+    ["Processors", processors],
+  ];
+}
+
+function emitEventFabricPostureDiagnostic(posture) {
+  const diagnosticKey = JSON.stringify({
+    state: posture?.state || "",
+    accessGroupCount: posture?.accessGroupCount || 0,
+    accessEpochCount: posture?.accessEpochCount || 0,
+    accessClassCount: posture?.accessClassCount || 0,
+    processorRoles: posture?.processorRoles || [],
+    currentEpochId: posture?.currentEpochId || "",
+  });
+  if (diagnosticKey === lastEventFabricDiagnosticKey) return;
+  lastEventFabricDiagnosticKey = diagnosticKey;
+  emitDiagnostic("logging-ui.event-fabric.posture", {
+    state: posture?.state || "pending",
+    accessGroupCount: posture?.accessGroupCount || 0,
+    accessEpochCount: posture?.accessEpochCount || 0,
+    accessClassCount: posture?.accessClassCount || 0,
+    processorRoles: posture?.processorRoles || [],
+    currentEpochId: posture?.currentEpochId || "",
+  });
 }
 
 function renderSettings() {
