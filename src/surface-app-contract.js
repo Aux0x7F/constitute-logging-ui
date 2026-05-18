@@ -3,15 +3,15 @@ import {
   SWARM,
   assertSurfaceAppManifest,
   assertSurfaceAppContract,
-} from "../../constitute-protocol/src/index.js";
+} from "constitute-protocol";
 import {
   defineSurfaceAppContract,
-} from "../../constitute-ui/src/surface-app-contract.js";
-import { surfaceAppSelectionReadModel } from "../../constitute-ui/src/surface-selection-read-model.js";
-import { createRuntimeSurfaceClient } from "../../constitute-ui/src/runtime-surface-client.js";
+} from "constitute-ui/surface-app-contract";
+import { surfaceAppSelectionReadModel } from "constitute-ui/surface-selection-read-model";
+import { createRuntimeSurfaceClient } from "constitute-ui/runtime-surface-client";
 import {
   createSurfaceModuleRegistry,
-} from "../../constitute-ui/src/surface-module-registry.js";
+} from "constitute-ui/surface-module-registry";
 import {
   projectionCoverage,
   projectionDeltaFor,
@@ -21,7 +21,7 @@ import {
   projectionRuntimeKey,
   projectionUpdatedAt,
   selectProjectionForNode,
-} from "../../constitute-ui/src/projection-read-model.js";
+} from "constitute-ui";
 
 const ISSUED_AT = 1700000000;
 

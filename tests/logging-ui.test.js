@@ -119,7 +119,8 @@ test("logging ui observes synchronized runtime projections instead of assembling
   assert.match(source, /DEFAULT_SYNC_TARGET_COUNT = 2_500/);
   assert.match(source, /nodePath: EVENTS_NODE/);
   assert.match(source, /RUNTIME_PROJECTION_CHANNELS/);
-  assert.match(source, /from "\.\.\/\.\.\/constitute-ui\/src\/projection-read-model\.js"/);
+  assert.match(source, /from "constitute-ui"/);
+  assert.doesNotMatch(source, /from "\.\.\/\.\.\/constitute-ui\/src\/projection-read-model\.js"/);
   assert.match(source, /selectProjectionForNode/);
   assert.match(source, /function projectionCoverage\(/);
   assert.match(source, /PROJECTION_SIGNATURE_MATERIALIZATION_BUDGET/);
@@ -148,7 +149,8 @@ test("logging ui observes synchronized runtime projections instead of assembling
   assert.match(source, /function mergeEvents\(/);
   assert.match(source, /function eventMaterializationKey\(/);
   assert.match(source, /LOGGING_UI_EVENT_TABLE_MATERIALIZATION_BUDGET_ID/);
-  assert.match(source, /from "\.\.\/\.\.\/constitute-ui\/src\/materialized-event-set\.js"/);
+  assert.match(source, /from "constitute-ui\/materialized-event-set"/);
+  assert.doesNotMatch(source, /from "\.\.\/\.\.\/constitute-ui\/src\/materialized-event-set\.js"/);
   assert.match(source, /materializeEventSet/);
   assert.match(source, /function materializeLoggingEventSet\(/);
   assert.match(source, /function eventTableMaterializationBudget\(/);
