@@ -298,6 +298,7 @@ test("logging ui declares a surface app contract", async () => {
     loggingSurfaceModuleRegistry,
     loggingSurfaceModules,
     loggingSurfaceRunnerPlan,
+    loggingSurfaceSelectionReadModel,
   } = await import("../src/surface-app-contract.js");
   assert.equal(loggingSurfaceApp.posture.state, "ready");
   assert.equal(loggingSurfaceApp.hasRole("runtimeClient"), true);
@@ -305,6 +306,8 @@ test("logging ui declares a surface app contract", async () => {
   assert.equal(loggingSurfaceApp.hasRole("productView"), true);
   assert.equal(loggingSurfaceModuleRegistry.kind, "surface.module.registry");
   assert.equal(loggingSurfaceModules.state, "ready");
+  assert.equal(loggingSurfaceSelectionReadModel.kind, "surface.app.selection.readModel");
+  assert.equal(loggingSurfaceSelectionReadModel.state, "ready");
   assert.equal(loggingSurfaceRuntimeSelectionPosture.kind, "surface.app.runtime.selection.posture");
   assert.equal(loggingSurfaceRuntimeSelectionPosture.state, "ready");
   assert.equal(typeof loggingRuntimeClientModule.createRuntimeSurfaceClient, "function");
@@ -324,6 +327,7 @@ test("logging ui declares a surface app contract", async () => {
   assert.equal(loggingServiceManagerOperationPosture.state, "requested");
   assert.equal(loggingServiceManagerProofDigest.kind, "service.manager.proof.digest");
   assert.equal(loggingSurfaceAttachContext.runtimeSelectionPosture, loggingSurfaceRuntimeSelectionPosture);
+  assert.equal(loggingSurfaceSelectionReadModel.attachContext, loggingSurfaceAttachContext);
   assert.equal(loggingSurfaceAttachContext.appInstancePosture, loggingSurfaceAppInstancePosture);
   assert.equal(loggingSurfaceAttachContext.runnerPlan, loggingSurfaceRunnerPlan);
   assert.equal(loggingSurfaceAttachContext.bootstrapContract, loggingSurfaceBootstrapContract);
