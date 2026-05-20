@@ -251,9 +251,9 @@ test("logging ui exposes projection diagnostics only behind debug flag", () => {
   assert.match(source, /projection\.sync\.diagnostic/);
   assert.match(source, /projection\.indexed/);
   assert.match(source, /projection\.observer\.notified/);
-  assert.match(source, /let lastRuntimeSnapshotDiagnosticKey = ""/);
-  assert.match(source, /function emitRuntimeSnapshotDiagnostic\(snapshot\)/);
-  assert.match(source, /if \(diagnosticKey === lastRuntimeSnapshotDiagnosticKey\) return/);
+  assert.match(source, /let lastRuntimeReadModelDiagnosticKey = ""/);
+  assert.match(source, /function emitRuntimeReadModelDiagnostic\(readModel, snapshot\)/);
+  assert.match(source, /if \(diagnosticKey === lastRuntimeReadModelDiagnosticKey\) return/);
   assert.doesNotMatch(source, /projection\.sync\.degraded/);
   assert.doesNotMatch(source, /service\.catalog\.retained/);
   assert.doesNotMatch(source, /service\.node\.retained\.degraded/);
@@ -337,7 +337,8 @@ test("logging ui declares a surface app contract", async () => {
 });
 
 test("logging ui renders resolved identity labels instead of raw ids", () => {
-  assert.match(source, /deriveRuntimeShellState\(runtimeSnapshot, \{ context: browserStorageShellContext\(\) \}\)/);
+  assert.match(source, /prepareRuntimeReadModel/);
+  assert.match(source, /const shellState = runtimeReadModel\.shell \|\| \{\}/);
   assert.match(source, /identityLabel: shellState\.identity\.handle/);
   assert.match(source, /accountCenterSummaryEl\.replaceChildren\(\)/);
   assert.doesNotMatch(source, /identityLabel = linked \? resolvedIdentityLabel/);
