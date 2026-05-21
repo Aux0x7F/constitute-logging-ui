@@ -251,9 +251,9 @@ test("logging ui exposes projection diagnostics only behind debug flag", () => {
   assert.match(source, /projection\.sync\.diagnostic/);
   assert.match(source, /projection\.indexed/);
   assert.match(source, /projection\.observer\.notified/);
-  assert.match(source, /let lastRuntimeSnapshotDiagnosticKey = ""/);
-  assert.match(source, /function emitRuntimeSnapshotDiagnostic\(snapshot\)/);
-  assert.match(source, /if \(diagnosticKey === lastRuntimeSnapshotDiagnosticKey\) return/);
+  assert.match(source, /let lastRuntimeReadModelDiagnosticKey = ""/);
+  assert.match(source, /function emitRuntimeReadModelDiagnostic\(readModel, snapshot\)/);
+  assert.match(source, /if \(diagnosticKey === lastRuntimeReadModelDiagnosticKey\) return/);
   assert.doesNotMatch(source, /projection\.sync\.degraded/);
   assert.doesNotMatch(source, /service\.catalog\.retained/);
   assert.doesNotMatch(source, /service\.node\.retained\.degraded/);
@@ -337,7 +337,8 @@ test("logging ui declares a surface app contract", async () => {
 });
 
 test("logging ui renders resolved identity labels instead of raw ids", () => {
-  assert.match(source, /deriveRuntimeShellState\(runtimeSnapshot, \{ context: browserStorageShellContext\(\) \}\)/);
+  assert.match(source, /prepareRuntimeReadModel/);
+  assert.match(source, /const shellState = runtimeReadModel\.shell \|\| \{\}/);
   assert.match(source, /identityLabel: shellState\.identity\.handle/);
   assert.match(source, /accountCenterSummaryEl\.replaceChildren\(\)/);
   assert.doesNotMatch(source, /identityLabel = linked \? resolvedIdentityLabel/);
@@ -355,15 +356,15 @@ test("logging dashboard renders service event fabric posture", () => {
   assert.match(source, /function eventFabricSummaryRows\(posture\)/);
   assert.match(source, /\["Event fabric", titleCaseWords\(posture\.state \|\| "pending"\)\]/);
   assert.match(source, /processorContracts = Array\.isArray\(fabric\.processorContracts\) \? fabric\.processorContracts : \[\]/);
-  assert.match(source, /securityProcessorSeeds = Array\.isArray\(fabric\.securityProcessorSeeds\) \? fabric\.securityProcessorSeeds : \[\]/);
+  assert.match(source, /securityProcessorContracts = processorContracts\.filter/);
   assert.match(source, /processorContractCount: processorContracts\.length/);
-  assert.match(source, /securitySeedCount: securityProcessorSeeds\.length/);
-  assert.match(source, /\["Security", posture\.securitySeedCount \? `\$\{posture\.securitySeedCount\} seed/);
+  assert.match(source, /securityProcessorCount: securityProcessorContracts\.length/);
+  assert.match(source, /\["Security", posture\.securityProcessorCount \? `\$\{posture\.securityProcessorCount\} processor/);
   assert.match(source, /processorStates: posture\?\.processorStates \|\| \[\]/);
-  assert.match(source, /securitySeedStates: posture\?\.securitySeedStates \|\| \[\]/);
+  assert.match(source, /securityProcessorStates: posture\?\.securityProcessorStates \|\| \[\]/);
   assert.match(source, /emitDiagnostic\("logging-ui\.event-fabric\.posture"/);
   assert.match(source, /accessGroupCount/);
   assert.match(source, /accessClassCount/);
   assert.match(source, /processorContractCount/);
-  assert.match(source, /securitySeedCount/);
+  assert.match(source, /securityProcessorCount/);
 });

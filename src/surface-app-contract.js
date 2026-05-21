@@ -188,6 +188,7 @@ export const loggingSurfaceAppContract = assertSurfaceAppContract({
   },
   releasePosture: {
     state: SURFACE_APP.RELEASE_POSTURE.STATIC,
+    releaseRef: "release:logging-ui:local",
     evidenceRefs: ["build:logging-ui:local"],
   },
   issuedAt: ISSUED_AT,

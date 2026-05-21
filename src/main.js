@@ -2,6 +2,7 @@ import "constitute-ui/styles.css";
 import "./styles.css";
 import {
   bindFirstPartyShellChrome,
+  prepareRuntimeReadModel,
   renderDataTable,
   renderActionList,
   renderFirstPartyShell,
@@ -15,10 +16,7 @@ import {
   runtimeWorkerScriptUrl as accountRuntimeWorkerScriptUrl,
 } from "../../constitute-account/runtime-contract.js";
 import { RUNTIME_DIAGNOSTIC_OPERATOR_PLANES, attachRuntimeDiagnostics } from "../../constitute-account/runtime-diagnostics.js";
-import {
-  browserStorageShellContext,
-  deriveRuntimeShellState,
-} from "constitute-ui/runtime-shell-state";
+import { browserStorageShellContext } from "constitute-ui/runtime-shell-state";
 import {
   projectionCoverage as sharedProjectionCoverage,
   projectionDeltaFor as sharedProjectionDeltaFor,
@@ -302,7 +300,8 @@ const popServicesEl = shell.popServicesEl;
 const popConnectionReasonEl = shell.popConnectionReasonEl;
 
 let runtimeDiagnosticsAgent = null;
-let runtimeSnapshot = null;
+let runtimeConsumerFloor = null;
+let runtimeReadModel = prepareRuntimeReadModel(null, runtimeReadModelOptions());
 let runtimeReady = false;
 let runtimeClient = null;
 let bootSplashDismissed = false;
@@ -318,7 +317,7 @@ let filterSuggestions = [];
 let activeSuggestionIndex = 0;
 let projectionPolicy = loadProjectionPolicy();
 let lastPublishedPolicyKey = "";
-let lastRuntimeSnapshotDiagnosticKey = "";
+let lastRuntimeReadModelDiagnosticKey = "";
 const lastProjectionSignatures = new Map();
 const projectionRepairRequests = new Map();
 const notifications = [];
@@ -328,7 +327,6 @@ let lastDashboardShortlistMaterializationBudget = null;
 let lastEventTableMaterializationBudget = null;
 let lastEventTableMaterializationDiagnosticKey = "";
 let lastEventFabricDiagnosticKey = "";
-let runtimeSnapshotConsumerFloor = null;
 let lastRuntimeConsumerFloorDiagnosticKey = "";
 let shellChrome = null;
 const debugParams = new URLSearchParams(window.location.search || "");
@@ -365,6 +363,22 @@ async function boot() {
 
 function runtimeWorkerUrl() {
   return accountRuntimeWorkerScriptUrl(window.location.origin);
+}
+
+function runtimeReadModelOptions() {
+  return {
+    context: browserStorageShellContext(),
+    now: Date.now(),
+    clientId: "logging-ui",
+    surface: "constitute-logging-ui",
+    consumerFloor: runtimeConsumerFloor || undefined,
+  };
+}
+
+function currentRuntimeSnapshot() {
+  return runtimeClient?.snapshot && typeof runtimeClient.snapshot === "object"
+    ? runtimeClient.snapshot
+    : null;
 }
 
 function accountBridgeUrl() {
@@ -417,6 +431,7 @@ function attachRuntime() {
     debugInfo: runtimeAttachDebugInfo(window.location.origin),
     logPrefix: "logging-ui",
     attachContext: loggingSurfaceAttachContext,
+    readModelOptions: runtimeReadModelOptions(),
     onPort: (port) => {
       runtimeDiagnosticsAgent = attachRuntimeDiagnostics({
         port,
@@ -463,22 +478,29 @@ function attachRuntime() {
       absorbRuntimeSnapshot(snapshot || null);
       dismissBootSplash();
     },
+    onReadModel: (readModel) => {
+      runtimeReadModel = readModel || prepareRuntimeReadModel(null, runtimeReadModelOptions());
+      runtimeReady = runtimeReadModel.ready;
+      renderRuntimeState();
+      renderDashboard();
+    },
     onConsumerFloor: (floor) => {
-      runtimeSnapshotConsumerFloor = floor && typeof floor === "object" ? floor : null;
+      runtimeConsumerFloor = floor && typeof floor === "object" ? floor : null;
+      runtimeReadModel = prepareRuntimeReadModel(currentRuntimeSnapshot(), runtimeReadModelOptions());
       const diagnosticKey = JSON.stringify({
-        floorId: runtimeSnapshotConsumerFloor?.floorId || "",
-        lagState: runtimeSnapshotConsumerFloor?.lagState || "",
-        ackFloor: runtimeSnapshotConsumerFloor?.ackFloor || "",
-        witnessFloor: runtimeSnapshotConsumerFloor?.witnessFloor || "",
+        floorId: runtimeConsumerFloor?.floorId || "",
+        lagState: runtimeConsumerFloor?.lagState || "",
+        ackFloor: runtimeConsumerFloor?.ackFloor || "",
+        witnessFloor: runtimeConsumerFloor?.witnessFloor || "",
       });
       if (diagnosticKey !== lastRuntimeConsumerFloorDiagnosticKey) {
         lastRuntimeConsumerFloorDiagnosticKey = diagnosticKey;
         emitDiagnostic("logging-ui.runtime.consumer-floor", {
-          floorId: runtimeSnapshotConsumerFloor?.floorId || "",
-          lagState: runtimeSnapshotConsumerFloor?.lagState || "",
-          ackFloor: runtimeSnapshotConsumerFloor?.ackFloor || "",
-          witnessFloor: runtimeSnapshotConsumerFloor?.witnessFloor || "",
-          compactionFloor: runtimeSnapshotConsumerFloor?.compactionFloor || "",
+          floorId: runtimeConsumerFloor?.floorId || "",
+          lagState: runtimeConsumerFloor?.lagState || "",
+          ackFloor: runtimeConsumerFloor?.ackFloor || "",
+          witnessFloor: runtimeConsumerFloor?.witnessFloor || "",
+          compactionFloor: runtimeConsumerFloor?.compactionFloor || "",
         });
       }
     },
@@ -507,11 +529,12 @@ function runtimeCall(type, payload = {}, timeoutMs = RUNTIME_CALL_TIMEOUT_MS) {
 }
 
 function absorbRuntimeSnapshot(snapshot) {
-  runtimeSnapshot = snapshot && typeof snapshot === "object" ? snapshot : null;
-  runtimeReady = Boolean(runtimeSnapshot);
-  emitRuntimeSnapshotDiagnostic(runtimeSnapshot);
+  const snap = snapshot && typeof snapshot === "object" ? snapshot : null;
+  runtimeReadModel = prepareRuntimeReadModel(snap, runtimeReadModelOptions());
+  runtimeReady = runtimeReadModel.ready;
+  emitRuntimeReadModelDiagnostic(runtimeReadModel, snap);
   renderRuntimeState();
-  applyProjectionSnapshot(runtimeSnapshot?.projections || {});
+  applyProjectionSnapshot(snap?.projections || {});
   publishProjectionPolicy();
   if (projectionCoverage(eventsProjection).completionRatio < 1) {
     emitDiagnostic("projection.coverage.incomplete", {
@@ -521,23 +544,23 @@ function absorbRuntimeSnapshot(snapshot) {
   }
 }
 
-function emitRuntimeSnapshotDiagnostic(snapshot) {
+function emitRuntimeReadModelDiagnostic(readModel, snapshot) {
   const projectionKeys = Object.keys(snapshot?.projections || {}).sort();
   const diagnosticKey = JSON.stringify({
     projectionKeys,
-    brokerAvailable: runtimeBrokerAvailable(),
-    runtimeSessionId: snapshot?.runtimeSessionId || "",
+    brokerAvailable: readModel?.broker?.available === true,
+    runtimeSessionId: readModel?.runtimeSessionId || "",
   });
-  if (diagnosticKey === lastRuntimeSnapshotDiagnosticKey) return;
-  lastRuntimeSnapshotDiagnosticKey = diagnosticKey;
+  if (diagnosticKey === lastRuntimeReadModelDiagnosticKey) return;
+  lastRuntimeReadModelDiagnosticKey = diagnosticKey;
   emitDiagnostic("logging-ui.runtime.snapshot.received", {
     projectionCount: projectionKeys.length,
-    brokerAvailable: runtimeBrokerAvailable(),
+    brokerAvailable: readModel?.broker?.available === true,
   });
 }
 
 function runtimeBrokerAvailable() {
-  return runtimeSnapshot?.broker?.available === true;
+  return runtimeReadModel?.broker?.available === true;
 }
 
 function applyProjectionSnapshot(projections) {
@@ -728,7 +751,8 @@ function rememberProjectionRepairRequest(repairRequest, frame = null) {
 
 function projectionRepairFor(projection, nodePath = EVENTS_NODE) {
   const target = String(nodePath || "").trim().toLowerCase();
-  const edgeRequests = Array.isArray(runtimeSnapshot?.edge?.repairRequests) ? runtimeSnapshot.edge.repairRequests : [];
+  const snapshot = currentRuntimeSnapshot();
+  const edgeRequests = Array.isArray(snapshot?.edge?.repairRequests) ? snapshot.edge.repairRequests : [];
   return sharedProjectionRepairFor(projection, {
     nodePath: target,
     channelMap: RUNTIME_PROJECTION_CHANNELS,
@@ -932,7 +956,7 @@ function mergeEventRecord(existing, next) {
 }
 
 function renderRuntimeState() {
-  const shellState = deriveRuntimeShellState(runtimeSnapshot, { context: browserStorageShellContext() });
+  const shellState = runtimeReadModel.shell || {};
 
   identityHandleEl.textContent = shellState.identity.handle;
   identityHandleEl.classList.toggle("identityHandle-linked", shellState.identity.linked);
@@ -1032,7 +1056,7 @@ function renderProjectionStatus() {
 
 function renderDashboard() {
   if (!dashboardCardsEl || !dashboardShortlistEl || !dashboardCoverageEl || !dashboardStorageEl) return;
-  const shellState = deriveRuntimeShellState(runtimeSnapshot, { context: browserStorageShellContext() });
+  const shellState = runtimeReadModel.shell || {};
   const storagePostureRows = [
     ["Resource", shellState.resource?.state || "unknown"],
     ["Retention", shellState.retention?.state || "unknown"],
@@ -1130,24 +1154,30 @@ function serviceEventFabricPosture(payload = {}) {
   const accessEpochs = Array.isArray(fabric.accessEpochs) ? fabric.accessEpochs : [];
   const accessClasses = Array.isArray(fabric.accessClasses) ? fabric.accessClasses : [];
   const processorContracts = Array.isArray(fabric.processorContracts) ? fabric.processorContracts : [];
-  const securityProcessorSeeds = Array.isArray(fabric.securityProcessorSeeds) ? fabric.securityProcessorSeeds : [];
-  const processorRoles = Array.isArray(fabric.processorRoles) ? fabric.processorRoles.map((role) => String(role || "").trim()).filter(Boolean) : [];
+  const processorRoles = processorContracts
+    .map((contract) => String(contract?.processorRoleRef || "").trim())
+    .filter(Boolean);
   const contentClasses = Array.isArray(fabric.contentClasses) ? fabric.contentClasses.map((entry) => String(entry || "").trim()).filter(Boolean) : [];
   const processorStates = processorContracts
     .map((contract) => String(contract?.state || "").trim())
     .filter(Boolean);
-  const securitySeedStates = securityProcessorSeeds
-    .map((seed) => String(seed?.state || "").trim())
+  const securityProcessorContracts = processorContracts.filter((contract) => {
+    const processorRef = String(contract?.processorRef || "").toLowerCase();
+    const processorRoleRef = String(contract?.processorRoleRef || "").toLowerCase();
+    return processorRef.includes("cybersec") || processorRef.includes("security") || processorRoleRef.includes("cybersec") || processorRoleRef.includes("security");
+  });
+  const securityProcessorStates = securityProcessorContracts
+    .map((contract) => String(contract?.state || "").trim())
     .filter(Boolean);
   return {
-    state: accessGroups.length && accessClasses.length && processorContracts.length && securityProcessorSeeds.length ? "declared" : "pending",
+    state: accessGroups.length && accessClasses.length && processorContracts.length ? "declared" : "pending",
     accessGroupCount: accessGroups.length,
     accessEpochCount: accessEpochs.length,
     accessClassCount: accessClasses.length,
     processorContractCount: processorContracts.length,
-    securitySeedCount: securityProcessorSeeds.length,
+    securityProcessorCount: securityProcessorContracts.length,
     processorStates,
-    securitySeedStates,
+    securityProcessorStates,
     processorRoles,
     contentClasses,
     currentEpochId: String(fabric.currentEpochId || "").trim(),
@@ -1164,7 +1194,7 @@ function eventFabricSummaryRows(posture) {
     ["Access", `${posture.accessGroupCount} group / ${posture.accessEpochCount} epoch`],
     ["Classes", posture.contentClasses.length ? posture.contentClasses.join(" + ") : `${posture.accessClassCount} classes`],
     ["Processors", posture.processorContractCount ? `${posture.processorContractCount} contract${posture.processorContractCount === 1 ? "" : "s"}` : processors],
-    ["Security", posture.securitySeedCount ? `${posture.securitySeedCount} seed${posture.securitySeedCount === 1 ? "" : "s"}` : "pending"],
+    ["Security", posture.securityProcessorCount ? `${posture.securityProcessorCount} processor${posture.securityProcessorCount === 1 ? "" : "s"}` : "pending"],
   ];
 }
 
@@ -1175,9 +1205,9 @@ function emitEventFabricPostureDiagnostic(posture) {
     accessEpochCount: posture?.accessEpochCount || 0,
     accessClassCount: posture?.accessClassCount || 0,
     processorContractCount: posture?.processorContractCount || 0,
-    securitySeedCount: posture?.securitySeedCount || 0,
+    securityProcessorCount: posture?.securityProcessorCount || 0,
     processorStates: posture?.processorStates || [],
-    securitySeedStates: posture?.securitySeedStates || [],
+    securityProcessorStates: posture?.securityProcessorStates || [],
     processorRoles: posture?.processorRoles || [],
     currentEpochId: posture?.currentEpochId || "",
   });
@@ -1189,9 +1219,9 @@ function emitEventFabricPostureDiagnostic(posture) {
     accessEpochCount: posture?.accessEpochCount || 0,
     accessClassCount: posture?.accessClassCount || 0,
     processorContractCount: posture?.processorContractCount || 0,
-    securitySeedCount: posture?.securitySeedCount || 0,
+    securityProcessorCount: posture?.securityProcessorCount || 0,
     processorStates: posture?.processorStates || [],
-    securitySeedStates: posture?.securitySeedStates || [],
+    securityProcessorStates: posture?.securityProcessorStates || [],
     processorRoles: posture?.processorRoles || [],
     currentEpochId: posture?.currentEpochId || "",
   });
